@@ -1,18 +1,39 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 
-const API_URL = 'https://api.mymemory.translated.net/get';
+const LT_URL = 'https://api.languagetool.org/v2/check';
 
-const INDIC = /[\u0900-\u097F\u0980-\u09FF\u0A00-\u0A7F\u0A80-\u0AFF\u0B00-\u0B7F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F]/;
+function detectLanguage(text) {
+  if (/[\u0900-\u097F]/.test(text)) return 'hi';
+  if (/[\u0980-\u09FF]/.test(text)) return 'bn';
+  if (/[\u0A00-\u0A7F]/.test(text)) return 'pa';
+  if (/[\u0A80-\u0AFF]/.test(text)) return 'gu';
+  if (/[\u0B00-\u0B7F]/.test(text)) return 'or';
+  if (/[\u0B80-\u0BFF]/.test(text)) return 'ta';
+  if (/[\u0C00-\u0C7F]/.test(text)) return 'te';
+  if (/[\u0C80-\u0CFF]/.test(text)) return 'kn';
+  if (/[\u0D00-\u0D7F]/.test(text)) return 'ml';
+  return 'en-US';
+}
 
-async function fetchSuggestions(word) {
+async function fetchSuggestions(word, fullText, selStart, selEnd) {
   try {
-    const lang = INDIC.test(word) ? 'hi' : 'en';
-    const res = await fetch(`${API_URL}?q=${encodeURIComponent(word)}&langpair=${lang}|${lang}&mt=0&num=5`);
+    const lang = detectLanguage(fullText);
+    const params = new URLSearchParams({ text: fullText, language: lang, enabledOnly: 'false' });
+    const res = await fetch(LT_URL, { method: 'POST', body: params });
     const data = await res.json();
     const matches = data?.matches || [];
-    return [...new Set(
-      matches.map((m) => m.segment || '').filter((s) => s && s.toLowerCase() !== word.toLowerCase())
-    )].slice(0, 6);
+
+    const overlapping = matches.filter((m) => {
+      const mEnd = m.offset + m.length;
+      return m.offset < selEnd && mEnd > selStart;
+    });
+
+    const all = overlapping.flatMap((m) =>
+      (m.replacements || []).map((r) => r.value)
+    ).filter(Boolean);
+
+    const unique = [...new Set(all)].filter((s) => s !== word).slice(0, 6);
+    return unique;
   } catch {
     return [];
   }
@@ -44,7 +65,6 @@ export default function SuggestionButton({ textareaRef }) {
     const selected = ta.value.substring(sel, sele).trim();
     if (!selected || selected.includes(' ')) { alert('Please select a single word.'); return; }
 
-    // Position popup near the button
     const rect = btnRef.current?.getBoundingClientRect();
     setPos({ left: rect ? rect.left : 0, top: rect ? rect.bottom + 4 : 0 });
 
@@ -53,7 +73,7 @@ export default function SuggestionButton({ textareaRef }) {
     setLoading(true);
     setSuggestions([]);
 
-    fetchSuggestions(selected).then((result) => {
+    fetchSuggestions(selected, ta.value, sel, sele).then((result) => {
       setSuggestions(result);
       setLoading(false);
     });
@@ -65,7 +85,6 @@ export default function SuggestionButton({ textareaRef }) {
     const sel = ta.selectionStart;
     const sele = ta.selectionEnd;
     const newValue = ta.value.substring(0, sel) + replacement + ta.value.substring(sele);
-    // Trigger React onChange
     const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
     nativeInputValueSetter.call(ta, newValue);
     ta.dispatchEvent(new Event('input', { bubbles: true }));
