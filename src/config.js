@@ -37,6 +37,8 @@ const CONFIG = {
     'indic-en': 'ai4bharat/indictrans2-indic-en-1B',
     'indic-indic': 'ai4bharat/indictrans2-indic-indic-1B',
   },
+  // OCR.space API key for re-scanning image regions
+  OCR_SPACE_API_KEY: 'K82846767888957',
 };
 
 export default CONFIG;

@@ -118,7 +118,7 @@ export default function SuggestionButton({ textareaRef, imageData, lines, paraIn
           {showPreview && (
             <div className="px-3 py-2 border-b border-gray-100">
               <div className="text-[10px] text-gray-400 mb-1">
-                {reOcrLoading ? 'Re-scanning image region with Tesseract...' : reOcrText ? 'Tesseract re-scan result:' : 'Image reference'}
+                {reOcrLoading ? 'Re-scanning image region...' : reOcrText ? 'Fresh scan result:' : 'Image reference'}
               </div>
               {!reOcrLoading && reOcrText && (
                 <div className="text-sm font-medium text-gray-800 bg-indigo-50 rounded p-2 mb-2 border border-indigo-100 leading-relaxed break-words">
@@ -126,7 +126,7 @@ export default function SuggestionButton({ textareaRef, imageData, lines, paraIn
                 </div>
               )}
               {reOcrLoading && (
-                <div className="text-xs text-gray-400 animate-pulse py-2">Loading Tesseract worker &amp; scanning...</div>
+                <div className="text-xs text-gray-400 animate-pulse py-2">Scanning with OCR.space...</div>
               )}
             </div>
           )}

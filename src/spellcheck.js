@@ -1,5 +1,5 @@
 import nspell from 'nspell';
-import { getReOcrWorker } from './ocr';
+import CONFIG from './config';
 
 let spellInstance = null;
 let spellPromise = null;
@@ -230,7 +230,29 @@ export async function reOcrRegion(imageData, bbox, padding) {
   const ctx = canvas.getContext('2d');
   ctx.drawImage(img, x, y, w, h, 0, 0, w, h);
 
-  const worker = await getReOcrWorker();
-  const { data } = await worker.recognize(canvas);
-  return data.text.trim();
+  // Re-OCR via OCR.space API instead of a second Tesseract worker
+  const base64 = canvas.toDataURL('image/png').replace('data:image/png;base64,', '');
+  const apiKey = CONFIG.OCR_SPACE_API_KEY;
+
+  if (!apiKey) return '';
+
+  try {
+    const formData = new FormData();
+    formData.append('apikey', apiKey);
+    formData.append('language', 'hin');
+    formData.append('base64image', base64);
+    formData.append('isOverlayRequired', 'false');
+    formData.append('scale', 'true');
+    formData.append('OCREngine', '2');
+
+    const res = await fetch('https://api.ocr.space/parse/image', { method: 'POST', body: formData });
+    const data = await res.json();
+
+    if (data.OCRExitCode === 1 && data.ParsedResults && data.ParsedResults.length > 0) {
+      return data.ParsedResults[0].ParsedText.trim();
+    }
+    return '';
+  } catch {
+    return '';
+  }
 }
