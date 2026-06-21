@@ -48,8 +48,8 @@ export function ReScanButton({ textareaRef, imageData, lines, onFocusImage, para
     const rect = btnRef.current?.getBoundingClientRect();
     let left = rect ? rect.left : 0;
     let top = rect ? rect.bottom + 4 : 0;
-    if (left + 420 > window.innerWidth) left = Math.max(0, window.innerWidth - 420);
-    if (top + 300 > window.innerHeight) top = Math.max(0, (rect ? rect.top : 0) - 300);
+    if (left + 600 > window.innerWidth) left = Math.max(0, window.innerWidth - 600);
+    if (top + 500 > window.innerHeight) top = Math.max(0, (rect ? rect.top : 0) - 500);
     setPos({ left, top });
     setSelPreview(text.length > 80 ? text.slice(0, 80) + '...' : text);
     setOpen(true);
@@ -113,7 +113,7 @@ export function ReScanButton({ textareaRef, imageData, lines, onFocusImage, para
       </button>
       {open && (
         <div
-          className="rescan-popup fixed z-[9999] bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[280px] max-w-[420px] text-sm max-h-[80vh] overflow-y-auto"
+          className="rescan-popup fixed z-[9999] bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[320px] max-w-[85vw] text-sm max-h-[90vh] overflow-y-auto"
           style={{ left: pos.left, top: pos.top }}
         >
           <div className="px-3 py-1.5 text-[10px] text-gray-400 border-b border-gray-100 truncate">
@@ -128,7 +128,7 @@ export function ReScanButton({ textareaRef, imageData, lines, onFocusImage, para
               <textarea
                 readOnly
                 className="w-full text-sm text-gray-800 bg-indigo-50 border border-indigo-100 rounded p-2 resize-none outline-none cursor-text select-text"
-                style={{ minHeight: 60, maxHeight: '55vh' }}
+                style={{ minHeight: 120, maxHeight: '65vh' }}
                 value={result}
               />
             )}
