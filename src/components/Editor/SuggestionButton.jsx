@@ -22,27 +22,91 @@ async function fetchSuggestions(word, fullText, selStart, selEnd) {
     const res = await fetch(LT_URL, { method: 'POST', body: params });
     const data = await res.json();
     const matches = data?.matches || [];
-
     const overlapping = matches.filter((m) => {
       const mEnd = m.offset + m.length;
       return m.offset < selEnd && mEnd > selStart;
     });
-
     const all = overlapping.flatMap((m) =>
       (m.replacements || []).map((r) => r.value)
     ).filter(Boolean);
-
-    const unique = [...new Set(all)].filter((s) => s !== word).slice(0, 6);
-    return unique;
+    return [...new Set(all)].filter((s) => s !== word).slice(0, 6);
   } catch {
     return [];
   }
 }
 
-export default function SuggestionButton({ textareaRef }) {
+function findLineBbox(lines, selStart, selEnd) {
+  let offset = 0;
+  for (const line of lines) {
+    const lineLen = line.text.length;
+    const lineStart = offset;
+    const lineEnd = offset + lineLen;
+    if (selStart < lineEnd && selEnd > lineStart) {
+      return line.bbox;
+    }
+    offset += lineLen + 1; // +1 for the \n joiner
+  }
+  return null;
+}
+
+const PREVIEW_WIDTH = 300;
+
+function PreviewCanvas({ imageData, lines, selStart, selEnd }) {
+  const canvasRef = useRef(null);
+
+  useEffect(() => {
+    const img = new window.Image();
+    img.onload = () => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+
+      const bbox = findLineBbox(lines, selStart, selEnd);
+      if (!bbox) return;
+
+      const iw = img.naturalWidth;
+      const ih = img.naturalHeight;
+      const bx0 = Math.max(0, bbox.x0);
+      const by0 = Math.max(0, bbox.y0);
+      const bx1 = Math.min(iw, bbox.x1);
+      const by1 = Math.min(ih, bbox.y1);
+      const bw = bx1 - bx0;
+      const bh = by1 - by0;
+      if (bw < 1 || bh < 1) return;
+
+      const pad = Math.max(4, bh * 0.3);
+      const cropX = Math.max(0, bx0 - pad);
+      const cropY = Math.max(0, by0 - pad);
+      const cropW = Math.min(iw - cropX, bw + pad * 2);
+      const cropH = Math.min(ih - cropY, bh + pad * 2);
+
+      const aspect = cropW / cropH;
+      const ch = Math.min(PREVIEW_WIDTH / aspect, 180);
+      const cw = ch * aspect;
+
+      canvas.width = cw;
+      canvas.height = ch;
+      ctx.clearRect(0, 0, cw, ch);
+      ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, cw, ch);
+    };
+    img.src = imageData;
+  }, [imageData, lines, selStart, selEnd]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="w-full rounded border border-gray-200"
+      style={{ maxHeight: '180px' }}
+    />
+  );
+}
+
+export default function SuggestionButton({ textareaRef, imageData, lines }) {
   const btnRef = useRef(null);
   const [open, setOpen] = useState(false);
   const [word, setWord] = useState('');
+  const [selStart, setSelStart] = useState(0);
+  const [selEnd, setSelEnd] = useState(0);
   const [loading, setLoading] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
   const [pos, setPos] = useState({});
@@ -69,6 +133,8 @@ export default function SuggestionButton({ textareaRef }) {
     setPos({ left: rect ? rect.left : 0, top: rect ? rect.bottom + 4 : 0 });
 
     setWord(selected);
+    setSelStart(sel);
+    setSelEnd(sele);
     setOpen(true);
     setLoading(true);
     setSuggestions([]);
@@ -91,6 +157,8 @@ export default function SuggestionButton({ textareaRef }) {
     close();
   }, [textareaRef, close]);
 
+  const showPreview = imageData && lines && lines.length > 0;
+
   return (
     <>
       <button
@@ -102,10 +170,21 @@ export default function SuggestionButton({ textareaRef }) {
       </button>
       {open && (
         <div
-          className="suggest-popup fixed z-[9999] bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[180px] text-sm"
+          className="suggest-popup fixed z-[9999] bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[220px] text-sm"
           style={{ left: pos.left, top: pos.top }}
         >
-          <div className="px-3 py-1.5 text-xs text-gray-400 border-b border-gray-100 truncate max-w-[240px]">
+          {showPreview && (
+            <div className="px-3 py-2 border-b border-gray-100">
+              <PreviewCanvas
+                imageData={imageData}
+                lines={lines}
+                selStart={selStart}
+                selEnd={selEnd}
+              />
+              <div className="text-[10px] text-gray-400 mt-1 text-center">Image crop of selected line</div>
+            </div>
+          )}
+          <div className="px-3 py-1.5 text-xs text-gray-400 border-b border-gray-100 truncate max-w-[280px]">
             &ldquo;{word}&rdquo;
           </div>
           <div>

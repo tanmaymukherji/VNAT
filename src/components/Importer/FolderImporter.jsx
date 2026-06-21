@@ -44,14 +44,16 @@ export default function FolderImporter({ onImport, disabled }) {
           data: dataUrl,
         });
 
-        for (const text of (r.paragraphs || [])) {
-          if (text.trim()) {
+        for (const para of (r.paragraphs || [])) {
+          const text = (typeof para === 'string' ? para : (para.text || '')).trim();
+          if (text) {
             allParagraphs.push({
               id: `para_${paragraphIndex}`,
               index: paragraphIndex,
               page: r.page || i + 1,
               filename: file.name,
-              text: text.trim(),
+              text,
+              lines: typeof para === 'object' && Array.isArray(para.lines) ? para.lines : undefined,
             });
             paragraphIndex++;
           }

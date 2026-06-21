@@ -268,7 +268,11 @@ export default function OcrValidator({ images, paragraphs, onSaveParagraphs }) {
                     <span className="text-[11px] text-gray-400 font-mono">¶{p.index + 1}</span>
                     {isEdited && <span className="text-[11px] text-amber-600 font-medium">edited</span>}
                     <div className="ml-auto">
-                      <SuggestionButton textareaRef={textareaRefs.current[p.index]} />
+                      <SuggestionButton
+                        textareaRef={textareaRefs.current[p.index]}
+                        imageData={pageImage?.data}
+                        lines={p.lines}
+                      />
                     </div>
                   </div>
                   <SmartTextarea

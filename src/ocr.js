@@ -75,20 +75,23 @@ export async function ocrImage(imageFile, onProgressFn) {
 
   let paragraphs = [];
 
-  // Strategy 1: Use Tesseract's paragraph detection with preserved line breaks
+  // Strategy 1: Use Tesseract's paragraph detection with preserved line breaks and bbox
   if (data.blocks && data.blocks.length > 0) {
     for (const block of data.blocks) {
       if (!block.paragraphs) continue;
       for (const para of block.paragraphs) {
         if (!para.lines || para.lines.length === 0) {
           const text = para.text?.trim();
-          if (text) paragraphs.push(text);
+          if (text) paragraphs.push({ text, lines: [] });
         } else {
           const lines = para.lines
-            .map((l) => (l.text || '').trim())
-            .filter(Boolean);
+            .map((l) => ({ text: (l.text || '').trim(), bbox: l.bbox }))
+            .filter((l) => l.text);
           if (lines.length > 0) {
-            paragraphs.push(lines.join('\n'));
+            paragraphs.push({
+              text: lines.map((l) => l.text).join('\n'),
+              lines,
+            });
           }
         }
       }
@@ -107,7 +110,7 @@ export async function ocrImage(imageFile, onProgressFn) {
     }
     const grouped = groupLinesIntoParagraphs(allLines);
     if (grouped.length > 0) {
-      paragraphs = grouped;
+      paragraphs = grouped.map((text) => ({ text, lines: [] }));
     }
   }
 
@@ -117,7 +120,7 @@ export async function ocrImage(imageFile, onProgressFn) {
     const parts = raw.split(/\n\s*\n/);
     const filtered = parts.map((p) => p.replace(/\n/g, ' ').trim()).filter(Boolean);
     if (filtered.length > 1) {
-      paragraphs = filtered;
+      paragraphs = filtered.map((text) => ({ text, lines: [] }));
     } else {
       // Single block: keep internal line breaks
       const lines = raw.split('\n').map((l) => l.trim()).filter(Boolean);
@@ -137,10 +140,10 @@ export async function ocrImage(imageFile, onProgressFn) {
           }
         }
         if (cur.length > 0) groups.push(cur.join('\n'));
-        if (groups.length >= 1) paragraphs = groups;
-        else paragraphs = [raw.replace(/\n/g, ' ').trim()];
+        if (groups.length >= 1) paragraphs = groups.map((text) => ({ text, lines: [] }));
+        else paragraphs = [{ text: raw.replace(/\n/g, ' ').trim(), lines: [] }];
       } else {
-        paragraphs = [raw.trim()];
+        paragraphs = [{ text: raw.trim(), lines: [] }];
       }
     }
   }
