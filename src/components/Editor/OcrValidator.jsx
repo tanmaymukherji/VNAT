@@ -12,7 +12,15 @@ function ZoomableImage({ src, alt, focusBox }) {
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [dragPanStart, setDragPanStart] = useState({ x: 0, y: 0 });
   const [loaded, setLoaded] = useState(false);
-  const focusCounterRef = useRef(0);
+
+  // Handle cached image: src may already be loaded before React attaches onLoad
+  useEffect(() => {
+    const img = imgRef.current;
+    if (img && img.complete && img.naturalWidth) {
+      setDims((prev) => ({ ...prev, iw: img.naturalWidth, ih: img.naturalHeight }));
+      setLoaded(true);
+    }
+  }, []);
 
   // Track container size with proper fallback
   useEffect(() => {
@@ -32,20 +40,45 @@ function ZoomableImage({ src, alt, focusBox }) {
     return () => ro.disconnect();
   }, []);
 
-  // When image loads, get natural size and fit to container
+  // When image loads (non-cached path), get natural size
   const onImgLoad = useCallback(() => {
     const img = imgRef.current;
     if (!img) return;
-    const iw = img.naturalWidth;
-    const ih = img.naturalHeight;
-    setDims((prev) => ({ ...prev, iw, ih }));
-    setLoaded(true);
+    if (img.naturalWidth && img.naturalHeight) {
+      setDims((prev) => ({ ...prev, iw: img.naturalWidth, ih: img.naturalHeight }));
+      setLoaded(true);
+    }
   }, []);
 
   // Recalculate fit zoom when container or image dimensions change
   const fitZoom = dims.cw > 0 && dims.iw > 0
     ? Math.min(dims.cw / dims.iw, dims.ch / dims.ih, 1)
     : 1;
+
+  // Non-passive wheel listener to allow preventDefault
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const handler = (e) => {
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      if (!rect) return;
+      const mx = e.clientX - rect.left - dims.cw / 2;
+      const my = e.clientY - rect.top - dims.ch / 2;
+      const factor = e.deltaY > 0 ? 0.85 : 1.18;
+      const newZoom = Math.max(fitZoom * 0.5, Math.min(5, zoom * factor));
+      const scale = newZoom / zoom;
+      const newPan = clampPan(
+        pan.x * scale + mx * (1 - scale),
+        pan.y * scale + my * (1 - scale),
+        newZoom
+      );
+      setZoom(newZoom);
+      setPan(newPan);
+    };
+    el.addEventListener('wheel', handler, { passive: false });
+    return () => el.removeEventListener('wheel', handler);
+  }, [zoom, pan, dims, fitZoom, clampPan]);
 
   // Reset to fit-to-screen when image loads or container resizes
   useEffect(() => {
@@ -71,16 +104,6 @@ function ZoomableImage({ src, alt, focusBox }) {
     const newPanX = -(bx - dims.iw / 2) * newZoom;
     const newPanY = -(by - dims.ih / 2) * newZoom;
 
-    focusCounterRef.current += 1;
-    console.log(`[ZoomableImage] focus #${focusCounterRef.current}:`, {
-      bbox: focusBox,
-      newZoom,
-      newPanX,
-      newPanY,
-      dims,
-      fitZoom
-    });
-
     setZoom(newZoom);
     setPan({ x: newPanX, y: newPanY });
   }, [focusBox, loaded, dims, fitZoom]);
@@ -96,24 +119,6 @@ function ZoomableImage({ src, alt, focusBox }) {
       y: Math.max(-maxY, Math.min(maxY, y)),
     };
   }, [dims, zoom]);
-
-  const handleWheel = useCallback((e) => {
-    e.preventDefault();
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const mx = e.clientX - rect.left - dims.cw / 2;
-    const my = e.clientY - rect.top - dims.ch / 2;
-    const factor = e.deltaY > 0 ? 0.85 : 1.18;
-    const newZoom = Math.max(fitZoom * 0.5, Math.min(5, zoom * factor));
-    const scale = newZoom / zoom;
-    const newPan = clampPan(
-      pan.x * scale + mx * (1 - scale),
-      pan.y * scale + my * (1 - scale),
-      newZoom
-    );
-    setZoom(newZoom);
-    setPan(newPan);
-  }, [zoom, pan, dims, fitZoom, clampPan]);
 
   const handleMouseDown = useCallback((e) => {
     if (zoom > fitZoom * 1.05) {
@@ -156,7 +161,6 @@ function ZoomableImage({ src, alt, focusBox }) {
     <div
       ref={containerRef}
       className="w-full h-full overflow-hidden bg-gray-900 flex items-center justify-center relative select-none"
-      onWheel={handleWheel}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}

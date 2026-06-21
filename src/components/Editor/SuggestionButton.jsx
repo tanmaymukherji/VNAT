@@ -67,9 +67,7 @@ export default function SuggestionButton({ textareaRef, imageData, lines, paraIn
     // Zoom main image to the selected line region
     if (imageData && lines && lines.length > 0 && onFocusImage) {
       const found = findLineBbox(lines, sel, sele);
-      console.log('[SuggestionButton] findLineBbox result:', found);
       if (found && found.bbox && typeof found.bbox.x0 === 'number') {
-        console.log('[SuggestionButton] calling onFocusImage with bbox:', found.bbox);
         onFocusImage(found.bbox);
       }
     }
