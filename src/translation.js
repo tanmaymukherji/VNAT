@@ -1,8 +1,23 @@
-// Translation API - direct browser calls to Hugging Face / Bhashini
+// Translation API - direct browser calls to LibreTranslate / Hugging Face / Bhashini
 
 import CONFIG from './config';
 
-// Language code mapping for IndicTrans2
+// LibreTranslate public instance (free, supports CORS)
+const LIBRE_TRANSLATE_URL = 'https://libretranslate.com/translate';
+const LIBRE_LANGS = {
+  bn: { name: 'Bengali', code: 'bn' },
+  hi: { name: 'Hindi', code: 'hi' },
+  ta: { name: 'Tamil', code: 'ta' },
+  te: { name: 'Telugu', code: 'te' },
+  mr: { name: 'Marathi', code: 'mr' },
+  gu: { name: 'Gujarati', code: 'gu' },
+  kn: { name: 'Kannada', code: 'kn' },
+  ml: { name: 'Malayalam', code: 'ml' },
+  pa: { name: 'Punjabi', code: 'pa' },
+  ur: { name: 'Urdu', code: 'ur' },
+};
+
+// Hugging Face language code mapping for IndicTrans2
 const IT2_LANG_MAP = {
   bn: 'ben_Beng',
   hi: 'hin_Deva',
@@ -27,9 +42,9 @@ function detectLanguage(text) {
   const devanagari = (text.match(/[\u0900-\u097F]/g) || []).length;
   const latin = (text.match(/[a-zA-Z]/g) || []).length;
   const total = devanagari + latin;
-  if (total === 0) return 'eng_Latn';
-  if (latin / total > 0.6) return 'eng_Latn';
-  return 'hin_Deva';
+  if (total === 0) return 'en';
+  if (latin / total > 0.6) return 'en';
+  return 'hi';
 }
 
 function isSanskrit(text) {
@@ -37,26 +52,33 @@ function isSanskrit(text) {
   return text.length > 0 && devanagari / text.length > 0.3;
 }
 
-// Helsinki-NLP OPUS-MT models for English-to-Indian-languages (unrestricted, no auth needed)
-const OPUS_MT_MODELS = {
-  bn: 'Helsinki-NLP/opus-mt-en-bn',
-  hi: 'Helsinki-NLP/opus-mt-en-hi',
-  ta: 'Helsinki-NLP/opus-mt-en-ta',
-  te: 'Helsinki-NLP/opus-mt-en-te',
-  mr: 'Helsinki-NLP/opus-mt-en-mr',
-  gu: 'Helsinki-NLP/opus-mt-en-gu',
-  kn: 'Helsinki-NLP/opus-mt-en-kn',
-  ml: 'Helsinki-NLP/opus-mt-en-ml',
-  pa: 'Helsinki-NLP/opus-mt-en-pa',
-  ur: 'Helsinki-NLP/opus-mt-en-ur',
-};
+// ---- LibreTranslate ----
+async function translateLibre(text, srcLang, tgtLang) {
+  const src = srcLang === 'auto' ? detectLanguage(text) : srcLang;
 
-async function translateOpusMT(text, tgtLang, apiKey) {
-  const modelId = OPUS_MT_MODELS[tgtLang];
-  if (!modelId) {
-    throw new Error(`No OPUS-MT model for target language: ${tgtLang}`);
+  const response = await fetch(LIBRE_TRANSLATE_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      q: text,
+      source: src,
+      target: tgtLang,
+      format: 'text',
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(`LibreTranslate error (${response.status}): ${body}`);
   }
 
+  const result = await response.json();
+  return result.translatedText || '';
+}
+
+// ---- Hugging Face (OPUS-MT) ----
+async function translateOpusMT(text, tgtLang, apiKey) {
+  const modelId = `Helsinki-NLP/opus-mt-en-${tgtLang}`;
   const url = `${CONFIG.HUGGINGFACE_API_URL}/${modelId}`;
   const headers = { 'Content-Type': 'application/json' };
   if (apiKey) {
@@ -76,7 +98,7 @@ async function translateOpusMT(text, tgtLang, apiKey) {
 
   if (!response.ok) {
     const body = await response.text().catch(() => '');
-    throw new Error(`HF API error (${response.status}): ${body}`);
+    throw new Error(`HF OPUS-MT error (${response.status}): ${body}`);
   }
 
   const result = await response.json();
@@ -86,6 +108,7 @@ async function translateOpusMT(text, tgtLang, apiKey) {
   return String(result.translation_text || result.generated_text || result);
 }
 
+// ---- Hugging Face (IndicTrans2) ----
 async function translateIndicTrans2(text, srcLang, tgtLang, apiKey) {
   const src = srcLang === 'auto' ? detectLanguage(text) : toIT2Code(srcLang);
   const tgt = toIT2Code(tgtLang);
@@ -121,7 +144,7 @@ async function translateIndicTrans2(text, srcLang, tgtLang, apiKey) {
 
   if (!response.ok) {
     const body = await response.text().catch(() => '');
-    throw new Error(`HF API error (${response.status}): ${body}`);
+    throw new Error(`HF IndicTrans2 error (${response.status}): ${body}`);
   }
 
   const result = await response.json();
@@ -136,41 +159,59 @@ async function translateIndicTrans2(text, srcLang, tgtLang, apiKey) {
   return translation;
 }
 
+// ---- Public API (tries LibreTranslate first, then Hugging Face) ----
 export async function translateHF(text, srcLang, tgtLang, apiKey) {
   if (isSanskrit(text)) {
     return { translation: text, note: 'Sanskrit text kept as-is' };
   }
 
+  const tgt = LIBRE_LANGS[tgtLang]?.code;
+  const src = srcLang === 'auto' ? 'auto' : srcLang;
+
+  let errors = [];
+
+  // Try LibreTranslate first (CORS-friendly, free, no auth needed)
+  if (tgt) {
+    try {
+      const translation = await translateLibre(text, src, tgt);
+      return { translation };
+    } catch (libreErr) {
+      errors.push(`LibreTranslate: ${libreErr.message}`);
+    }
+  }
+
+  // Try OPUS-MT next (source must be English)
   if (srcLang === 'auto' || srcLang === 'en') {
     try {
       const translation = await translateOpusMT(text, tgtLang, apiKey);
       return { translation };
     } catch (opusErr) {
-      console.warn('OPUS-MT failed, trying IndicTrans2:', opusErr.message);
-      try {
-        const translation = await translateIndicTrans2(text, srcLang, tgtLang, apiKey);
-        return { translation };
-      } catch (it2Err) {
-        throw new Error(`Translation failed (OPUS-MT: ${opusErr.message}, IndicTrans2: ${it2Err.message})`);
-      }
+      errors.push(`OPUS-MT: ${opusErr.message}`);
     }
   }
 
-  const translation = await translateIndicTrans2(text, srcLang, tgtLang, apiKey);
-  return { translation };
+  // Try IndicTrans2 last
+  try {
+    const translation = await translateIndicTrans2(text, srcLang, tgtLang, apiKey);
+    return { translation };
+  } catch (it2Err) {
+    errors.push(`IndicTrans2: ${it2Err.message}`);
+  }
+
+  throw new Error(`All translation methods failed: ${errors.join('; ')}`);
 }
 
+// ---- Bhashini (kept for when API key is available) ----
 export async function translateBhashini(text, srcLang, tgtLang, apiKey) {
   if (isSanskrit(text)) {
     return { translation: text, note: 'Sanskrit text kept as-is' };
   }
 
-  if (!apiKey || apiKey === 'your_bhashini_api_key_here') {
+  if (!apiKey) {
     throw new Error('Bhashini API key not configured');
   }
 
-  const src = srcLang === 'auto' ? detectLanguage(text).split('_')[0] : srcLang;
-  const tgt = tgtLang.split('_')[0];
+  const src = srcLang === 'auto' ? detectLanguage(text) : srcLang;
 
   const response = await fetch(`${CONFIG.BHASHINI_API_URL}/translate`, {
     method: 'POST',
@@ -180,7 +221,7 @@ export async function translateBhashini(text, srcLang, tgtLang, apiKey) {
     },
     body: JSON.stringify({
       sourceLanguage: src,
-      targetLanguage: tgt,
+      targetLanguage: tgtLang,
       text,
     }),
   });
@@ -193,6 +234,7 @@ export async function translateBhashini(text, srcLang, tgtLang, apiKey) {
   return { translation: result.translation || result.text || '' };
 }
 
+// ---- Top-level translate function ----
 export async function translate(provider, text, srcLang, tgtLang, apiKey) {
   if (provider === 'bhashini') {
     try {
