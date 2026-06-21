@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import SmartTextarea from './SmartTextarea';
+import SuggestionButton from './SuggestionButton';
 
 function ZoomableImage({ src, alt }) {
   const containerRef = useRef(null);
@@ -171,6 +172,7 @@ export default function OcrValidator({ images, paragraphs, onSaveParagraphs }) {
 
   const [currentPage, setCurrentPage] = useState(pages.length > 0 ? pages[0] : 1);
   const [edited, setEdited] = useState({});
+  const textareaRefs = useRef({});
 
   // Reset to first page if pages change
   useEffect(() => {
@@ -259,13 +261,18 @@ export default function OcrValidator({ images, paragraphs, onSaveParagraphs }) {
               const text = getText(p);
               const rows = Math.max(2, text.split('\n').length, Math.ceil(text.length / 60));
               const isEdited = edited[p.index] !== undefined && edited[p.index] !== p.text;
+              if (!textareaRefs.current[p.index]) textareaRefs.current[p.index] = React.createRef();
               return (
                 <div key={p.index} className="mb-3">
                   <div className="flex items-center gap-2 mb-0.5">
                     <span className="text-[11px] text-gray-400 font-mono">¶{p.index + 1}</span>
                     {isEdited && <span className="text-[11px] text-amber-600 font-medium">edited</span>}
+                    <div className="ml-auto">
+                      <SuggestionButton textareaRef={textareaRefs.current[p.index]} />
+                    </div>
                   </div>
                   <SmartTextarea
+                    ref={textareaRefs.current[p.index]}
                     value={text}
                     onChange={(newText) => updateText(p.index, newText)}
                     className={`w-full p-3 rounded border text-sm resize-y min-h-[3.5rem] font-sans leading-relaxed whitespace-pre-wrap focus:outline-none ${

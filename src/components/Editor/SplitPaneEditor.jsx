@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, createRef } from 'react';
 import { translate } from '../../translation';
 import { generateDocx } from '../../docx';
 import SmartTextarea from './SmartTextarea';
+import SuggestionButton from './SuggestionButton';
 import CONFIG from '../../config';
 
 function parseParagraphs(project) {
@@ -57,6 +58,7 @@ function parseParagraphs(project) {
 }
 
 function PageGroup({ pageNum, paragraphs, originals, translations, translatingIndex, onTextChange, onTranslate, onKeepOriginal }) {
+  const textareaRefs = useRef({});
   const filename = paragraphs[0]?.filename || '';
   return (
     <div className="mb-6">
@@ -76,13 +78,18 @@ function PageGroup({ pageNum, paragraphs, originals, translations, translatingIn
       {paragraphs.map((p) => {
         const text = originals[p.index] !== undefined ? originals[p.index] : p.text;
         const rows = Math.max(2, text.split('\n').length, Math.ceil(text.length / 55));
+        if (!textareaRefs.current[p.index]) textareaRefs.current[p.index] = createRef();
         return (
           <div key={p.id || p.index} className="mb-2 ml-2">
             <div className="flex items-center gap-2 mb-0.5">
               <span className="text-[11px] text-gray-400 font-mono">¶{p.index + 1}</span>
               <span className="text-[11px] text-gray-400">p.{pageNum}</span>
+              <div className="ml-auto">
+                <SuggestionButton textareaRef={textareaRefs.current[p.index]} />
+              </div>
             </div>
             <SmartTextarea
+              ref={textareaRefs.current[p.index]}
               value={text}
               onChange={(newText) => onTextChange(p.index, newText)}
               className="w-full p-3 bg-white rounded border border-gray-200 focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 text-sm resize-y min-h-[3.5rem] font-sans leading-relaxed whitespace-pre-wrap"
@@ -111,6 +118,7 @@ function PageGroup({ pageNum, paragraphs, originals, translations, translatingIn
 }
 
 function TranslationPageGroup({ pageNum, paragraphs, translations, onTextChange }) {
+  const textareaRefs = useRef({});
   const paraList = Array.isArray(paragraphs) ? paragraphs : [];
   const hasAny = paraList.some((p) => translations && translations[p.index] !== undefined);
   if (!hasAny) return null;
@@ -133,12 +141,17 @@ function TranslationPageGroup({ pageNum, paragraphs, translations, onTextChange 
         const t = translations[p.index];
         if (t === undefined) return null;
         const rows = Math.max(2, t.split('\n').length, Math.ceil(t.length / 55));
+        if (!textareaRefs.current[p.index]) textareaRefs.current[p.index] = createRef();
         return (
           <div key={p.id || p.index} className="mb-2 ml-2">
             <div className="flex items-center gap-2 mb-0.5">
               <span className="text-[11px] text-gray-400 font-mono">¶{p.index + 1}</span>
+              <div className="ml-auto">
+                <SuggestionButton textareaRef={textareaRefs.current[p.index]} />
+              </div>
             </div>
             <SmartTextarea
+              ref={textareaRefs.current[p.index]}
               value={t}
               onChange={(newText) => onTextChange(p.index, newText)}
               className="w-full p-3 bg-white rounded border border-green-200 focus:border-green-400 focus:ring-1 focus:ring-green-400 text-sm resize-y min-h-[3.5rem] font-sans leading-relaxed whitespace-pre-wrap"
