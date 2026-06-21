@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import CONFIG from '../config';
+import { listProjects, saveProject } from '../storage';
 
 export default function SettingsPanel({ onClose }) {
   const [hfKey, setHfKey] = useState(
@@ -12,6 +13,66 @@ export default function SettingsPanel({ onClose }) {
     localStorage.getItem('libretranslate_api_key') || ''
   );
   const [saved, setSaved] = useState(false);
+  const [storageInfo, setStorageInfo] = useState(null);
+  const [importStatus, setImportStatus] = useState('');
+  const fileInputRef = useRef(null);
+  const [exporting, setExporting] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const projects = await listProjects();
+        const totalSize = new Blob([JSON.stringify(projects)]).size;
+        setStorageInfo({ count: projects.length, size: totalSize });
+      } catch { setStorageInfo({ count: 0, size: 0 }) }
+    })();
+  }, []);
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const projects = await listProjects();
+      const blob = new Blob([JSON.stringify(projects, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `translation-tool-backup-${new Date().toISOString().slice(0,10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert('Export failed: ' + err.message);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleImport = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportStatus('Importing...');
+    try {
+      const text = await file.text();
+      const projects = JSON.parse(text);
+      if (!Array.isArray(projects)) throw new Error('Invalid backup file');
+      let imported = 0;
+      for (const p of projects) {
+        if (p.id && p.content) {
+          await saveProject(p);
+          imported++;
+        }
+      }
+      setImportStatus(`Imported ${imported} document(s). Refresh the library.`);
+    } catch (err) {
+      setImportStatus('Import failed: ' + err.message);
+    }
+    e.target.value = '';
+  };
+
+  function formatSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / 1048576).toFixed(1) + ' MB';
+  }
 
   const handleSave = () => {
     localStorage.setItem('hf_api_key', hfKey);
@@ -78,6 +139,47 @@ export default function SettingsPanel({ onClose }) {
             <p className="text-xs text-gray-500 mt-1">
               Optional. Free tier available at portal.libretranslate.com.
             </p>
+          </div>
+        </div>
+
+        <hr className="my-4" />
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-2">Storage</h3>
+          <div className="bg-gray-50 rounded p-3 text-xs text-gray-600 space-y-2">
+            <p>
+              Documents are saved in your browser's <strong>IndexedDB</strong> database.
+              Data stays on your device and is not uploaded anywhere.
+            </p>
+            {storageInfo && (
+              <p>
+                <strong>{storageInfo.count}</strong> document(s) &middot; ~{formatSize(storageInfo.size)} used
+              </p>
+            )}
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={handleExport}
+                disabled={exporting}
+                className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-3 py-1 rounded text-xs disabled:opacity-50"
+              >
+                {exporting ? 'Exporting...' : 'Export All (JSON)'}
+              </button>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-3 py-1 rounded text-xs"
+              >
+                Import Backup
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".json"
+                onChange={handleImport}
+                className="hidden"
+              />
+            </div>
+            {importStatus && (
+              <p className="text-blue-700">{importStatus}</p>
+            )}
           </div>
         </div>
 
