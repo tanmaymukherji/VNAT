@@ -1,90 +1,134 @@
-// Client-side document storage using IndexedDB
-
-import { openDB } from 'idb';
+// Client-side document storage using native IndexedDB
 
 const DB_NAME = 'TranslationTool';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
-let db = null;
-
-async function getDB() {
-  if (db) return db;
-
-  db = await openDB(DB_NAME, DB_VERSION, {
-    upgrade(db) {
-      // Projects store
-      if (!db.objectStoreNames.contains('projects')) {
-        const store = db.createObjectStore('projects', {
-          keyPath: 'id',
-          autoIncrement: true,
-        });
-        store.createIndex('folder_path', 'folder_path', { unique: true });
-        store.createIndex('name', 'name', { unique: false });
-        store.createIndex('created_at', 'created_at', { unique: false });
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (db.objectStoreNames.contains('projects')) {
+        db.deleteObjectStore('projects');
       }
-    },
+      const store = db.createObjectStore('projects', { keyPath: 'id' });
+      store.createIndex('folder_path', 'folder_path', { unique: false });
+      store.createIndex('name', 'name', { unique: false });
+      store.createIndex('created_at', 'created_at', { unique: false });
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
   });
+}
 
-  return db;
+let dbPromise = null;
+
+function getDB() {
+  if (!dbPromise) dbPromise = openDB();
+  return dbPromise;
+}
+
+function isValidKey(value) {
+  if (value === null || value === undefined) return false;
+  const t = typeof value;
+  if (t === 'number') return isFinite(value);
+  if (t === 'string') return true;
+  return false;
 }
 
 export async function listProjects() {
-  const database = await getDB();
-  const projects = await database.getAll('projects');
-  // Sort by last_opened descending
-  projects.sort((a, b) => {
-    const da = a.last_opened || a.created_at || 0;
-    const db2 = b.last_opened || b.created_at || 0;
-    return db2 - da;
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('projects', 'readonly');
+    const store = tx.objectStore('projects');
+    const request = store.getAll();
+    request.onsuccess = () => {
+      const projects = request.result || [];
+      projects.sort((a, b) => {
+        const da = a.last_opened || a.created_at || 0;
+        const db2 = b.last_opened || b.created_at || 0;
+        return db2 - da;
+      });
+      resolve(projects);
+    };
+    request.onerror = () => reject(request.error);
   });
-  return projects;
 }
 
 export async function getProject(id) {
-  const database = await getDB();
-  return database.get('projects', id);
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('projects', 'readonly');
+    const store = tx.objectStore('projects');
+    const request = store.get(id);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
 }
 
 export async function saveProject(project) {
-  const database = await getDB();
-  const now = Date.now();
-  const toSave = {
-    ...project,
-    last_opened: now,
-  };
+  const db = await getDB();
 
-  if (!toSave.id) {
-    toSave.created_at = now;
-    toSave.id = undefined; // Let autoIncrement assign
+  if (!project || typeof project !== 'object') {
+    throw new Error('saveProject: project must be an object, got ' + typeof project);
   }
 
-  const id = await database.put('projects', toSave);
-  return { ...toSave, id };
+  const now = Date.now();
+  const keys = Object.keys(project);
+
+  // Log what we received
+  console.log('[saveProject] keys:', keys.join(','));
+  console.log('[saveProject] id:', project.id, 'type:', typeof project.id);
+
+  // Generate a string ID for new records, reuse existing if valid
+  let finalId;
+  if (project.id != null && isValidKey(project.id)) {
+    finalId = project.id;
+  } else {
+    finalId = 'p_' + now + '_' + Math.random().toString(36).slice(2, 8);
+  }
+
+  console.log('[saveProject] finalId:', finalId, 'type:', typeof finalId);
+
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('projects', 'readwrite');
+    const store = tx.objectStore('projects');
+
+    // Build clean object with no undefined values
+    const toStore = {};
+    for (const k of keys) {
+      const v = project[k];
+      if (v !== undefined && k !== 'id') {
+        toStore[k] = v;
+      }
+    }
+    toStore.id = finalId;
+    toStore.last_opened = now;
+    if (!('created_at' in toStore)) {
+      toStore.created_at = now;
+    }
+
+    const request = store.put(toStore);
+    request.onsuccess = () => resolve(toStore);
+    request.onerror = () => {
+      const err = request.error;
+      console.error('[saveProject] FAILED:', err ? err.message : 'unknown', 'id:', finalId);
+      reject(err || new Error('IndexedDB put failed'));
+    };
+  });
 }
 
 export async function deleteProject(id) {
-  const database = await getDB();
-  await database.delete('projects', id);
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('projects', 'readwrite');
+    const store = tx.objectStore('projects');
+    const request = store.delete(id);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
 }
 
 export async function createProject(name, folderPath, content, paragraphs) {
-  const project = {
-    name,
-    folder_path: folderPath,
-    content: content || '',
-    paragraphs: paragraphs || 0,
-    created_at: Date.now(),
-    last_opened: Date.now(),
-  };
-  return saveProject(project);
-}
-
-export async function updateProjectContent(id, content) {
-  const database = await getDB();
-  const project = await database.get('projects', id);
-  if (!project) throw new Error(`Project ${id} not found`);
-  project.content = content;
-  project.last_opened = Date.now();
-  await database.put('projects', project);
-  return project;
+  return saveProject({ name, folder_path: folderPath, content, paragraphs });
 }
