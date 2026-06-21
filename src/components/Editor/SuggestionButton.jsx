@@ -47,26 +47,30 @@ export function ReScanButton({ textareaRef, imageData, lines, onFocusImage }) {
     setResult('');
     setLoading(true);
 
-    if (imageData) {
-      // Try line-level crop if bbox data is available
-      let bbox = null;
-      if (lines && lines.length > 0 && sel !== sele) {
-        const found = findLineBbox(lines, sel, sele);
-        if (found && found.bbox && typeof found.bbox.x0 === 'number') {
-          bbox = found.bbox;
-          if (onFocusImage) onFocusImage(bbox);
-        }
+    if (imageData && lines && lines.length > 0 && sel !== sele) {
+      const found = findLineBbox(lines, sel, sele);
+      if (found && found.bbox && typeof found.bbox.x0 === 'number') {
+        if (onFocusImage) onFocusImage(found.bbox);
+        setLoading(true);
+        reOcrRegion(imageData, found.bbox).then((txt) => {
+          setResult(txt || '(empty result)');
+          setLoading(false);
+        }).catch((err) => {
+          setResult('Error: ' + (err?.message || err || 'OCR.space API failed'));
+          setLoading(false);
+        });
+      } else {
+        setResult('Could not locate your selection in the image. Try a different selection.');
+        setLoading(false);
       }
-      reOcrRegion(imageData, bbox).then((txt) => {
-        const label = bbox ? '(cropped region)' : '(full page)';
-        setResult(txt ? `${txt}\n\n— ${label}` : `(empty result) ${label}`);
-        setLoading(false);
-      }).catch((err) => {
-        setResult('Error: ' + (err?.message || err || 'OCR.space API failed'));
-        setLoading(false);
-      });
-    } else {
+    } else if (!imageData) {
       setResult('No image available for this page.');
+      setLoading(false);
+    } else if (!lines || lines.length === 0) {
+      setResult('This page was OCR\'d without line position data. Re-import the images with the latest version to enable region re-scan.');
+      setLoading(false);
+    } else {
+      setResult('Select a portion of text first to re-scan that region from the image.');
       setLoading(false);
     }
   }, [textareaRef, imageData, lines, onFocusImage]);

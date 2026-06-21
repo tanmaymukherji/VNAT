@@ -213,39 +213,23 @@ function loadImage(src) {
   });
 }
 
-const TARGET_MP = 1.5; // target megapixels for full-page fallback (< 1.5MB API limit)
-
 export async function reOcrRegion(imageData, bbox, padding) {
   const img = await loadImage(imageData);
-  let iw = img.naturalWidth;
-  let ih = img.naturalHeight;
+  const iw = img.naturalWidth;
+  const ih = img.naturalHeight;
 
-  let sx, sy, sw, sh;
-  let fullPage = false;
-  if (bbox && typeof bbox.x0 === 'number') {
-    const pad = padding !== undefined ? padding : Math.max(8, (bbox.x1 - bbox.x0) * 0.3);
-    sx = Math.max(0, bbox.x0 - pad);
-    sy = Math.max(0, bbox.y0 - pad);
-    sw = Math.min(iw - sx, (bbox.x1 - bbox.x0) + pad * 2);
-    sh = Math.min(ih - sy, (bbox.y1 - bbox.y0) + pad * 2);
-    if (sw < 4 || sh < 4) return '';
-  } else {
-    sx = 0; sy = 0; sw = iw; sh = ih;
-    fullPage = true;
-  }
-
-  let scale = 1;
-  if (fullPage && (sw * sh > TARGET_MP * 1e6)) {
-    scale = Math.sqrt(TARGET_MP * 1e6 / (sw * sh));
-  }
-  const cw = Math.round(sw * scale);
-  const ch = Math.round(sh * scale);
+  const pad = padding !== undefined ? padding : Math.max(8, (bbox.x1 - bbox.x0) * 0.3);
+  const sx = Math.max(0, bbox.x0 - pad);
+  const sy = Math.max(0, bbox.y0 - pad);
+  const sw = Math.min(iw - sx, (bbox.x1 - bbox.x0) + pad * 2);
+  const sh = Math.min(ih - sy, (bbox.y1 - bbox.y0) + pad * 2);
+  if (sw < 4 || sh < 4) return '';
 
   const canvas = document.createElement('canvas');
-  canvas.width = cw;
-  canvas.height = ch;
+  canvas.width = sw;
+  canvas.height = sh;
   const ctx = canvas.getContext('2d');
-  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, cw, ch);
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
 
   const base64 = canvas.toDataURL('image/png');
   const apiKey = CONFIG.OCR_SPACE_API_KEY;

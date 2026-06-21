@@ -26,6 +26,23 @@ async function getWorker() {
   return worker;
 }
 
+function computeLineBbox(line) {
+  if (line.bbox && typeof line.bbox.x0 === 'number') return line.bbox;
+  // Tesseract.js v7 puts bbox at word level; compute line bbox from words
+  if (line.words && line.words.length > 0) {
+    const valid = line.words.filter(w => w.bbox && typeof w.bbox.x0 === 'number');
+    if (valid.length > 0) {
+      return {
+        x0: Math.min(...valid.map(w => w.bbox.x0)),
+        y0: Math.min(...valid.map(w => w.bbox.y0)),
+        x1: Math.max(...valid.map(w => w.bbox.x1)),
+        y1: Math.max(...valid.map(w => w.bbox.y1)),
+      };
+    }
+  }
+  return undefined;
+}
+
 function groupLinesIntoParagraphs(lines) {
   if (!lines || lines.length === 0) return [];
 
@@ -88,7 +105,7 @@ export async function ocrImage(imageFile, onProgressFn) {
           if (text) paragraphs.push({ text, lines: [] });
         } else {
           const lines = para.lines
-            .map((l) => ({ text: (l.text || '').trim(), bbox: l.bbox }))
+            .map((l) => ({ text: (l.text || '').trim(), bbox: computeLineBbox(l) }))
             .filter((l) => l.text);
           if (lines.length > 0) {
             paragraphs.push({
@@ -107,7 +124,11 @@ export async function ocrImage(imageFile, onProgressFn) {
     for (const block of data.blocks) {
       if (block.paragraphs) {
         for (const para of block.paragraphs) {
-          if (para.lines) allLines.push(...para.lines);
+          if (para.lines) {
+            for (const l of para.lines) {
+              allLines.push({ text: l.text, bbox: computeLineBbox(l) });
+            }
+          }
         }
       }
     }
