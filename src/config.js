@@ -2,9 +2,9 @@
 // All API keys and settings in one place.
 
 const CONFIG = {
-  // Hugging Face Inference API (set via Settings panel, persisted in localStorage)
+  // Hugging Face Inference API key (set via Settings panel, persisted in localStorage)
+  // Uses the @huggingface/inference client which routes through router.huggingface.co
   HUGGINGFACE_API_KEY: localStorage.getItem('hf_api_key') || '',
-  HUGGINGFACE_API_URL: 'https://api-inference.huggingface.co/models',
 
   // Bhashini API
   BHASHINI_API_KEY: localStorage.getItem('bhashini_api_key') || '',

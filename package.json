@@ -11,6 +11,7 @@
     "deploy": "npm run build && npx gh-pages -d dist"
   },
   "dependencies": {
+    "@huggingface/inference": "^4.13.19",
     "docx": "^9.7.1",
     "file-saver": "^2.0.5",
     "idb": "^8.0.3",
