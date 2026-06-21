@@ -225,13 +225,26 @@ export async function reOcrRegion(imageData, bbox, padding) {
   const sh = Math.min(ih - sy, (bbox.y1 - bbox.y0) + pad * 2);
   if (sw < 4 || sh < 4) return '';
 
-  const canvas = document.createElement('canvas');
-  canvas.width = sw;
-  canvas.height = sh;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+  const MAX_BYTES = 1.4 * 1024 * 1024; // 1.4 MB safe margin under 1.5 MB limit
 
-  const base64 = canvas.toDataURL('image/png');
+  function renderRegion(w, h) {
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, w, h);
+    return c.toDataURL('image/png');
+  }
+
+  let b64 = renderRegion(sw, sh);
+  let scale = 1;
+  while (b64.length > MAX_BYTES && scale > 0.2) {
+    scale *= 0.7;
+    const rw = Math.round(sw * scale);
+    const rh = Math.round(sh * scale);
+    if (rw < 40 || rh < 40) break;
+    b64 = renderRegion(rw, rh);
+  }
+
   const apiKey = CONFIG.OCR_SPACE_API_KEY;
 
   if (!apiKey) return '';
