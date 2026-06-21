@@ -17,15 +17,20 @@ function findLineBbox(lines, selStart, selEnd) {
 
 function PreviewCanvas({ imageData, lines, selStart, selEnd }) {
   const canvasRef = useRef(null);
+  const [imgLoaded, setImgLoaded] = useState(false);
   const [lineText, setLineText] = useState('');
 
+  const found = findLineBbox(lines, selStart, selEnd);
+  const hasBbox = found && found.bbox && typeof found.bbox.x0 === 'number';
+
   useEffect(() => {
-    const found = findLineBbox(lines, selStart, selEnd);
-    if (!found) return;
+    if (!hasBbox || !imageData) return;
     setLineText(found.lineText);
+    setImgLoaded(false);
 
     const img = new window.Image();
     img.onload = () => {
+      setImgLoaded(true);
       const canvas = canvasRef.current;
       if (!canvas) return;
       const ctx = canvas.getContext('2d');
@@ -39,14 +44,13 @@ function PreviewCanvas({ imageData, lines, selStart, selEnd }) {
       const by1 = Math.min(ih, bbox.y1);
       const bw = bx1 - bx0;
       const bh = by1 - by0;
-      if (bw < 1 || bh < 1) return;
+      if (bw < 2 || bh < 2) return;
 
       const pad = Math.max(4, bh * 0.3);
       const cropX = Math.max(0, bx0 - pad);
       const cropY = Math.max(0, by0 - pad);
       const cropW = Math.min(iw - cropX, bw + pad * 2);
       const cropH = Math.min(ih - cropY, bh + pad * 2);
-
       const aspect = cropW / cropH;
       const ch = Math.min(300 / aspect, 150);
       const cw = ch * aspect;
@@ -56,14 +60,18 @@ function PreviewCanvas({ imageData, lines, selStart, selEnd }) {
       ctx.clearRect(0, 0, cw, ch);
       ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, cw, ch);
     };
+    img.onerror = () => setImgLoaded(false);
     img.src = imageData;
   }, [imageData, lines, selStart, selEnd]);
+
+  if (!hasBbox) return <div className="text-[10px] text-gray-400 italic py-1">Image crop: re-import images to enable line-by-line preview</div>;
+  if (!imgLoaded) return <div className="text-[10px] text-gray-400 italic py-1">Loading image preview...</div>;
 
   return (
     <div>
       <canvas
         ref={canvasRef}
-        className="w-full rounded border border-gray-200"
+        className="w-full rounded border border-gray-200 bg-gray-50"
         style={{ maxHeight: '150px' }}
       />
       {lineText && (
@@ -133,7 +141,7 @@ export default function SuggestionButton({ textareaRef, imageData, lines }) {
     close();
   }, [textareaRef, close]);
 
-  const showPreview = imageData && lines && lines.length > 0;
+  const showPreview = imageData && lines;
 
   return (
     <>
