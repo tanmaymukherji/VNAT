@@ -10,7 +10,7 @@ A fully browser-based standalone web app hosted on GitHub Pages:
 Just open the URL and use it.
 
 ## Live Site
-https://tanmaymukherji.github.io/t3/
+https://tanmaymukherji.github.io/T3/
 
 ## Features
 - **OCR**: Browser-based OCR using Tesseract.js (Hindi, English, Sanskrit)
