@@ -130,8 +130,6 @@ function buildTableBlock(lines, region) {
 export async function extractTextParagraphs(pdfDoc) {
   const allLines = [];
   for (let i = 1; i <= pdfDoc.numPages; i++) {
-    // Yield before each page to keep UI responsive
-    await new Promise(r => setTimeout(r, 0));
     const page = await pdfDoc.getPage(i);
     const content = await page.getTextContent();
     const lines = groupToLines(content.items);
@@ -140,8 +138,6 @@ export async function extractTextParagraphs(pdfDoc) {
     page.cleanup();
   }
 
-  // Yield before heavy synchronous table detection
-  await new Promise(r => setTimeout(r, 0));
   const tableRegions = detectTableRegions(allLines);
 
   // Build result: interleave paragraph and table blocks
