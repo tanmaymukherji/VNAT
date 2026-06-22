@@ -175,7 +175,7 @@ export default function FolderImporter({ onImport, disabled }) {
 
   async function pdfjsDocLoad(buffer) {
     const pdfjs = await initPdfJs();
-    return pdfjs.getDocument(buffer).promise;
+    return pdfjs.getDocument(new Uint8Array(buffer)).promise;
   }
 
   const handleFolderSelect = async () => {

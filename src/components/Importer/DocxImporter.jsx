@@ -69,7 +69,7 @@ export default function DocxImporter({ onImport, disabled }) {
   const processPdf = async (file, handle) => {
     const buf = await file.arrayBuffer();
     const pdfjs = await initPdfJs();
-    const doc = await pdfjs.getDocument(buf).promise;
+    const doc = await pdfjs.getDocument(new Uint8Array(buf)).promise;
     const isText = await detectTextPdf(doc);
 
     if (isText) {
