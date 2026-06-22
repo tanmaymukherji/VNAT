@@ -203,32 +203,7 @@ export default function DocxImporter({ onImport, disabled }) {
 
   const handleClick = () => {
     console.log('[DocxImporter] handleClick');
-    if ('showOpenFilePicker' in window) {
-      console.log('[DocxImporter] using showOpenFilePicker');
-      window.showOpenFilePicker({
-        multiple: false,
-        types: [{ accept: {
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
-          'application/pdf': ['.pdf'],
-        }}],
-      }).then(async ([handle]) => {
-        console.log('[DocxImporter] file picker resolved');
-        const file = await handle.getFile();
-        console.log('[DocxImporter] got file:', file.name, file.size);
-        if (!file.name.toLowerCase().endsWith('.docx') && !file.name.toLowerCase().endsWith('.pdf')) {
-          alert('Please select a .docx or .pdf file.');
-          return;
-        }
-        await processFile(file, handle);
-        console.log('[DocxImporter] processFile completed');
-      }).catch((err) => {
-        console.log('[DocxImporter] showOpenFilePicker error:', err.name, err.message);
-        if (err.name !== 'AbortError') fileInputRef.current?.click();
-      });
-    } else {
-      console.log('[DocxImporter] showOpenFilePicker not available, using fallback input');
-      fileInputRef.current?.click();
-    }
+    fileInputRef.current?.click();
   };
 
   const handleFileChange = (e) => {

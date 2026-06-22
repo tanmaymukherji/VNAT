@@ -52,6 +52,7 @@ export default function App() {
   const [view, setView] = useState('library');
   const [editorTab, setEditorTab] = useState('ocr');
   const [showSettings, setShowSettings] = useState(false);
+  console.log('[App] render loading=', loading, 'view=', view);
 
   useEffect(() => {
     loadProjects();
