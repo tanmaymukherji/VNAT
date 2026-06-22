@@ -67,13 +67,22 @@ export default function DocxImporter({ onImport, disabled }) {
   };
 
   const processPdf = async (file, handle) => {
+    console.log('[processPdf] START - reading file');
     const buf = await file.arrayBuffer();
+    console.log('[processPdf] file read, size:', buf.byteLength);
     const pdfjs = await initPdfJs();
+    console.log('[processPdf] pdfjs initialized');
+    const t0 = performance.now();
     const doc = await pdfjs.getDocument({data: new Uint8Array(buf)}).promise;
+    console.log('[processPdf] doc loaded, pages:', doc.numPages, 'in', (performance.now() - t0).toFixed(0), 'ms');
     const isText = await detectTextPdf(doc);
+    console.log('[processPdf] detectTextPdf:', isText);
 
     if (isText) {
+      console.log('[processPdf] text PDF - extracting paragraphs');
+      const t1 = performance.now();
       const paragraphs = await extractTextParagraphs(doc);
+      console.log('[processPdf] extracted', paragraphs.length, 'paragraphs in', (performance.now() - t1).toFixed(0), 'ms');
       const name = file.name.replace(/\.pdf$/i, '') || 'Untitled Document';
         doc.loadingTask.destroy();
       if (paragraphs.length === 0) {
@@ -96,6 +105,7 @@ export default function DocxImporter({ onImport, disabled }) {
         }
         return entry;
       });
+      console.log('[processPdf] calling onImport for text PDF');
       onImport({
         name,
         folder: file.name,
@@ -104,11 +114,14 @@ export default function DocxImporter({ onImport, disabled }) {
         fileHandle: handle || null,
       });
     } else {
-      // Scanned PDF: render high-res and OCR
+      console.log('[processPdf] scanned PDF - rendering pages');
       const rendered = [];
       for (let i = 1; i <= doc.numPages; i++) {
+        console.log('[processPdf] rendering page', i);
+        const t1 = performance.now();
         const page = await doc.getPage(i);
         const f = await renderPageToFile(page, 3.0, `${file.name}_p${i}.png`);
+        console.log('[processPdf] page', i, 'rendered in', (performance.now() - t1).toFixed(0), 'ms, size:', f.size);
         rendered.push(f);
         page.cleanup();
       }
@@ -119,7 +132,10 @@ export default function DocxImporter({ onImport, disabled }) {
         return;
       }
 
+      console.log('[processPdf] starting OCR on', rendered.length, 'images');
+      const tOcr = performance.now();
       const ocrResults = await ocrMultipleImages(rendered, () => {});
+      console.log('[processPdf] OCR done in', (performance.now() - tOcr).toFixed(0), 'ms');
 
       const allImages = [];
       const allParagraphs = [];
@@ -150,6 +166,7 @@ export default function DocxImporter({ onImport, disabled }) {
       }
 
       const name = file.name.replace(/\.pdf$/i, '') || 'Untitled Document';
+      console.log('[processPdf] calling onImport for scanned PDF');
       onImport({
         name,
         folder: file.name,
@@ -160,25 +177,34 @@ export default function DocxImporter({ onImport, disabled }) {
   };
 
   const processFile = async (file, handle) => {
+    console.log('[DocxImporter] processFile called', file.name, file.size);
     setBusy(true);
     try {
       if (/\.docx$/i.test(file.name)) {
+        console.log('[DocxImporter] routing to processDocx');
         await processDocx(file, handle);
+        console.log('[DocxImporter] processDocx done');
       } else if (/\.pdf$/i.test(file.name)) {
+        console.log('[DocxImporter] routing to processPdf, size:', file.size);
+        const t0 = performance.now();
         await processPdf(file, handle);
+        console.log('[DocxImporter] processPdf done in', (performance.now() - t0).toFixed(0), 'ms');
       } else {
         alert('Please select a .docx or .pdf file.');
       }
     } catch (err) {
-      console.error('Import failed:', err);
+      console.error('[DocxImporter] Import failed:', err);
       alert('Import failed: ' + err.message);
     } finally {
+      console.log('[DocxImporter] processFile finally - setting busy false');
       setBusy(false);
     }
   };
 
   const handleClick = () => {
+    console.log('[DocxImporter] handleClick');
     if ('showOpenFilePicker' in window) {
+      console.log('[DocxImporter] using showOpenFilePicker');
       window.showOpenFilePicker({
         multiple: false,
         types: [{ accept: {
@@ -186,16 +212,21 @@ export default function DocxImporter({ onImport, disabled }) {
           'application/pdf': ['.pdf'],
         }}],
       }).then(async ([handle]) => {
+        console.log('[DocxImporter] file picker resolved');
         const file = await handle.getFile();
+        console.log('[DocxImporter] got file:', file.name, file.size);
         if (!file.name.toLowerCase().endsWith('.docx') && !file.name.toLowerCase().endsWith('.pdf')) {
           alert('Please select a .docx or .pdf file.');
           return;
         }
         await processFile(file, handle);
+        console.log('[DocxImporter] processFile completed');
       }).catch((err) => {
+        console.log('[DocxImporter] showOpenFilePicker error:', err.name, err.message);
         if (err.name !== 'AbortError') fileInputRef.current?.click();
       });
     } else {
+      console.log('[DocxImporter] showOpenFilePicker not available, using fallback input');
       fileInputRef.current?.click();
     }
   };
