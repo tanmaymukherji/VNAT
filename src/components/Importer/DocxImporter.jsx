@@ -119,7 +119,7 @@ export default function DocxImporter({ onImport, disabled }) {
       <button
         onClick={handleClick}
         disabled={disabled || busy}
-        className="bg-emerald-600 hover:bg-emerald-700 px-4 py-1.5 rounded text-sm disabled:opacity-50 flex items-center gap-1.5"
+        className="bg-indigo-600 hover:bg-indigo-700 px-4 py-1.5 rounded text-sm disabled:opacity-50 flex items-center gap-1.5"
       >
         {busy ? 'Reading DOCX...' : '+ Import DOCX'}
       </button>

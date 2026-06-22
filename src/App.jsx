@@ -168,7 +168,7 @@ export default function App() {
           <nav className="flex gap-2">
             <button
               onClick={() => setView('library')}
-              className={`px-3 py-1 rounded text-sm ${view === 'library' ? 'bg-slate-600' : 'hover:bg-slate-700'}`}
+              className="bg-emerald-600 hover:bg-emerald-700 px-3 py-1 rounded text-sm"
             >
               Library
             </button>

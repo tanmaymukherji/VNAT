@@ -1,4 +1,4 @@
-# Translation Tool
+# T³ - Tanmay's Translation Tool
 
 A fully browser-based standalone web app hosted on GitHub Pages:
 1. Select a folder of scanned images (Hindi/English/Sanskrit)
@@ -10,7 +10,7 @@ A fully browser-based standalone web app hosted on GitHub Pages:
 Just open the URL and use it.
 
 ## Live Site
-https://tanmaymukherji.github.io/Translation_Tool/
+https://tanmaymukherji.github.io/t3/
 
 ## Features
 - **OCR**: Browser-based OCR using Tesseract.js (Hindi, English, Sanskrit)
