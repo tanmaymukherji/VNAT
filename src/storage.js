@@ -185,12 +185,21 @@ export async function writeImage(projectId, pageNumber, blob) {
   await writable.close();
 }
 
-export async function readImage(projectId, pageNumber) {
+export async function readImage(projectId, pageNumber, ext) {
   try {
     const projectDir = await _getProjectDir(projectId);
     const imagesDir = await projectDir.getDirectoryHandle('images');
-    const fileHandle = await imagesDir.getFileHandle(`page_${pageNumber}.png`);
-    return await fileHandle.getFile();
+    // Try the specific extension first, then fall back to .png, then .jpg
+    const extensions = ext ? [ext] : ['png', 'jpg', 'jpeg'];
+    for (const e of extensions) {
+      try {
+        const fileHandle = await imagesDir.getFileHandle(`page_${pageNumber}.${e}`);
+        return await fileHandle.getFile();
+      } catch {
+        continue;
+      }
+    }
+    return null;
   } catch {
     return null;
   }

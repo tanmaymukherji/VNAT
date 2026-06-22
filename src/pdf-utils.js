@@ -174,24 +174,15 @@ export async function extractTextParagraphs(pdfDoc) {
   return result;
 }
 
-export async function renderPageToDataUrl(page, scale) {
+export async function renderPageToFile(page, scale, filename, format = 'png') {
   const vp = page.getViewport({ scale });
   const canvas = document.createElement('canvas');
   canvas.width = vp.width;
   canvas.height = vp.height;
   const ctx = canvas.getContext('2d');
   await page.render({ canvasContext: ctx, viewport: vp }).promise;
-  return canvas.toDataURL('image/png');
-}
-
-export async function renderPageToFile(page, scale, filename) {
-  const vp = page.getViewport({ scale });
-  const canvas = document.createElement('canvas');
-  canvas.width = vp.width;
-  canvas.height = vp.height;
-  const ctx = canvas.getContext('2d');
-  await page.render({ canvasContext: ctx, viewport: vp }).promise;
+  const mime = format === 'jpeg' ? 'image/jpeg' : 'image/png';
   return new Promise((resolve) => {
-    canvas.toBlob((blob) => resolve(new File([blob], filename, { type: 'image/png' })), 'image/png');
+    canvas.toBlob((blob) => resolve(new File([blob], filename, { type: mime })), mime, format === 'jpeg' ? 0.85 : undefined);
   });
 }
