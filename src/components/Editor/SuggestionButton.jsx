@@ -15,7 +15,7 @@ function findLineBbox(lines, selStart, selEnd) {
   return null;
 }
 
-export function ReScanButton({ textareaRef, imageData, lines, onFocusImage, paraIndex, totalParas }) {
+export function ReScanButton({ textareaRef, imageData, lines, onFocusImage, paraIndex, totalParas, disabled }) {
   const btnRef = useRef(null);
   const [open, setOpen] = useState(false);
   const [result, setResult] = useState('');
@@ -38,6 +38,7 @@ export function ReScanButton({ textareaRef, imageData, lines, onFocusImage, para
   }
 
   const handleClick = useCallback(() => {
+    if (disabled) return;
     const ta = textareaRef?.current;
     if (!ta) return;
     const sel = ta.selectionStart;
@@ -99,17 +100,18 @@ export function ReScanButton({ textareaRef, imageData, lines, onFocusImage, para
       setResult('Cannot determine image region. Select a few words within a paragraph and try again.');
       setLoading(false);
     }
-  }, [textareaRef, imageData, lines, onFocusImage, paraIndex, totalParas]);
+  }, [textareaRef, imageData, lines, onFocusImage, paraIndex, totalParas, disabled]);
 
   return (
     <>
       <button
         ref={btnRef}
         onClick={handleClick}
-        className="rescan-btn text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded hover:bg-orange-200"
-        title="Re-scan image region with OCR.space"
+        disabled={disabled}
+        className={`rescan-btn text-xs px-2 py-0.5 rounded ${disabled ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-orange-100 text-orange-700 hover:bg-orange-200'}`}
+        title={disabled ? 'Re-scan not available for text-based PDF paragraphs' : 'Re-scan image region with OCR.space'}
       >
-        ⟳ Re-scan
+        {disabled ? '—' : '⟳ Re-scan'}
       </button>
       {open && (
         <div

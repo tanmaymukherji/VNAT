@@ -74,7 +74,7 @@ export default function App() {
 
       if (typeof result === 'object' && result.paragraphs && Array.isArray(result.paragraphs)) {
         const htmlContent = result.paragraphs
-          .map((p) => `<p data-page="${p.page}" data-filename="${p.filename || ''}">${p.text}</p>`)
+          .map((p) => `<p data-page="${p.page}" data-filename="${p.filename || ''}"${p.source ? ` data-source="${p.source}"` : ''}>${p.text}</p>`)
           .join('\n');
 
         project = await saveProject({
@@ -85,6 +85,7 @@ export default function App() {
           total_paragraphs: result.paragraphs.length,
           images: result.images || [],
           fileHandle: result.fileHandle || null,
+          isDocx: !!result.isDocx,
         });
       } else if (typeof result === 'object' && result.id) {
         project = result;
@@ -105,7 +106,7 @@ export default function App() {
 
   const handleSelectProject = (project) => {
     setActiveProject(project);
-    setEditorTab(project.images?.length ? 'ocr' : 'translate');
+    setEditorTab(project.isDocx ? 'translate' : project.images?.length ? 'ocr' : 'translate');
     setView('editor');
   };
 

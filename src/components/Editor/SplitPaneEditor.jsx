@@ -22,6 +22,7 @@ function parseParagraphs(project) {
           index,
           page: parseInt(p.getAttribute('data-page'), 10) || 1,
           filename: p.getAttribute('data-filename') || '',
+          source: p.getAttribute('data-source') || undefined,
           text,
         });
         index++;
@@ -32,13 +33,14 @@ function parseParagraphs(project) {
   const paraField = project?.paragraphsArray || project?.paragraphs;
   if (result.length === 0 && Array.isArray(paraField) && paraField.length > 0) {
     for (const p of paraField) {
-      result.push({
-        id: p.id || `p_${index}`,
-        index,
-        page: p.page || 1,
-        filename: p.filename || '',
-        text: p.text,
-      });
+        result.push({
+          id: p.id || `p_${index}`,
+          index,
+          page: p.page || 1,
+          filename: p.filename || '',
+          source: p.source || undefined,
+          text: p.text,
+        });
       index++;
     }
   }
@@ -90,6 +92,7 @@ function PageGroup({ pageNum, paragraphs, originals, translations, translatingIn
                 lines={linesByIndex[p.index]}
                 paraIndex={idx}
                 totalParas={paragraphs.length}
+                disabled={p.source === 'pdf_text'}
               />
               <span className="text-[11px] text-gray-400 font-mono">¶{p.index + 1}</span>
               <span className="text-[11px] text-gray-400">p.{pageNum}</span>
@@ -159,6 +162,7 @@ function TranslationPageGroup({ pageNum, paragraphs, translations, onTextChange,
                 lines={linesByIndex[p.index]}
                 paraIndex={idx}
                 totalParas={paraList.length}
+                disabled={p.source === 'pdf_text'}
               />
               <span className="text-[11px] text-gray-400 font-mono">¶{p.index + 1}</span>
             </div>
@@ -393,7 +397,7 @@ export default function SplitPaneEditor({ project, images, paragraphs: origParag
       }
     }
     const html = kept.map((p) =>
-      `<p data-page="${p.page}" data-filename="${p.filename || ''}">${p.text}</p>`
+      `<p data-page="${p.page}" data-filename="${p.filename || ''}"${p.source ? ` data-source="${p.source}"` : ''}>${p.text}</p>`
     ).join('\n');
     onSave(html, { translations: remapped });
   };

@@ -311,6 +311,7 @@ export default function OcrValidator({ images, paragraphs, onSaveParagraphs }) {
                       onFocusImage={setFocusBbox}
                       paraIndex={idx}
                       totalParas={pageParagraphs.length}
+                      disabled={p.source === 'pdf_text'}
                     />
                     <span className="text-[11px] text-gray-400 font-mono">¶{p.index + 1}</span>
                     {isEdited && <span className="text-[11px] text-amber-600 font-medium">edited</span>}
