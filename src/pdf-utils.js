@@ -1,4 +1,5 @@
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import { detectPdfGridTables, itemInsidePdfTable } from './pdf-grid-tables.js';
 
 let pdfjsInstance = null;
 let initPromise = null;
@@ -128,11 +129,11 @@ function groupLinesToParagraphs(lines) {
     const gap = prev ? lines[i].y - prev.y : 0;
     const pageBreak = prev ? lines[i].page !== prev.page : false;
     if (pageBreak || gap > (lines[i].fontSize || 12) * 2.5) {
-      if (cur.length) { result.push({ text: cur.map(l => l.text).join('\n'), page: cur[0].page }); cur = []; }
+      if (cur.length) { result.push({ text: cur.map(l => l.text).join('\n'), page: cur[0].page, sortY: cur[0].y }); cur = []; }
     }
     cur.push(lines[i]);
   }
-  if (cur.length) result.push({ text: cur.map(l => l.text).join('\n'), page: cur[0].page });
+  if (cur.length) result.push({ text: cur.map(l => l.text).join('\n'), page: cur[0].page, sortY: cur[0].y });
   return result;
 }
 
@@ -163,7 +164,7 @@ function linesToParagraphs(allLines) {
     if (region.start > lastEnd) {
       const paras = groupLinesToParagraphs(allLines.slice(lastEnd, region.start));
       for (const p of paras) {
-        result.push({ text: p.text, source: 'pdf_text', page: p.page || 1 });
+        result.push({ text: p.text, source: 'pdf_text', page: p.page || 1, sortY: p.sortY });
       }
     }
     // Table block
@@ -175,6 +176,7 @@ function linesToParagraphs(allLines) {
       page: allLines[region.start].page || 1,
       type: 'table',
       rows: rows,
+      sortY: allLines[region.start].y,
     });
     lastEnd = region.end;
   }
@@ -182,7 +184,7 @@ function linesToParagraphs(allLines) {
   if (lastEnd < allLines.length) {
     const paras = groupLinesToParagraphs(allLines.slice(lastEnd));
     for (const p of paras) {
-      result.push({ text: p.text, source: 'pdf_text', page: p.page || 1 });
+      result.push({ text: p.text, source: 'pdf_text', page: p.page || 1, sortY: p.sortY });
     }
   }
 
@@ -191,9 +193,18 @@ function linesToParagraphs(allLines) {
 
 export async function extractPageParagraphs(page, pageNumber, content = null) {
   const pageContent = content || await page.getTextContent();
-  const lines = groupToLines(pageContent.items);
+  const operatorList = await page.getOperatorList();
+  const pageHeight = page.view?.[3] || page.getViewport({ scale: 1 }).height;
+  const gridTables = detectPdfGridTables(pageContent.items, operatorList, pageHeight);
+  const remainingItems = gridTables.length
+    ? pageContent.items.filter((item) => !gridTables.some((table) => itemInsidePdfTable(item, table)))
+    : pageContent.items;
+  const lines = groupToLines(remainingItems);
   for (const line of lines) line.page = pageNumber;
-  return linesToParagraphs(lines);
+  const paragraphs = linesToParagraphs(lines);
+  return [...paragraphs, ...gridTables]
+    .sort((a, b) => (b.sortY || 0) - (a.sortY || 0))
+    .map(({ sortY, ...entry }) => ({ ...entry, page: pageNumber }));
 }
 
 export async function extractTextParagraphs(pdfDoc) {

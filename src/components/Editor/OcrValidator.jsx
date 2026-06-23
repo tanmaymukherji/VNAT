@@ -2,8 +2,10 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import SmartTextarea from './SmartTextarea';
 import SuggestionButton, { ReScanButton, TableRescanButton } from './SuggestionButton';
 import { readImage, readSourceDocument } from '../../storage';
+import { reOcrRegionDetailed } from '../../spellcheck';
+import PdfPageCanvas from './PdfPageCanvas';
 
-function ZoomableImage({ src, alt, focusBox }) {
+function ZoomableImage({ src, alt, focusBox, selectionMode = false, onZoneSelected }) {
   const containerRef = useRef(null);
   const imgRef = useRef(null);
   const [dims, setDims] = useState({ cw: 1, ch: 1, iw: 1, ih: 1 });
@@ -13,6 +15,8 @@ function ZoomableImage({ src, alt, focusBox }) {
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [dragPanStart, setDragPanStart] = useState({ x: 0, y: 0 });
   const [loaded, setLoaded] = useState(false);
+  const [selection, setSelection] = useState(null);
+  const selectionStartRef = useRef(null);
 
   useEffect(() => {
     const img = imgRef.current;
@@ -115,22 +119,53 @@ function ZoomableImage({ src, alt, focusBox }) {
   }, [focusBox, loaded, dims, fitZoom]);
 
   const handleMouseDown = useCallback((e) => {
+    if (selectionMode) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const imageLeft = dims.cw / 2 + pan.x - dims.iw * zoom / 2;
+      const imageTop = dims.ch / 2 + pan.y - dims.ih * zoom / 2;
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      const x = Math.max(0, Math.min(dims.iw, (sx - imageLeft) / zoom));
+      const y = Math.max(0, Math.min(dims.ih, (sy - imageTop) / zoom));
+      selectionStartRef.current = { x, y, sx, sy };
+      setSelection({ x0: sx, y0: sy, x1: sx, y1: sy });
+      return;
+    }
     if (zoom > fitZoom * 1.05) {
       setDragging(true);
       setDragStart({ x: e.clientX, y: e.clientY });
       setDragPanStart({ x: pan.x, y: pan.y });
     }
-  }, [zoom, fitZoom, pan]);
+  }, [selectionMode, dims, pan, zoom, fitZoom]);
 
   const handleMouseMove = useCallback((e) => {
+    if (selectionMode && selectionStartRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      setSelection((previous) => ({ ...previous, x1: e.clientX - rect.left, y1: e.clientY - rect.top }));
+      return;
+    }
     if (dragging) {
       const dx = e.clientX - dragStart.x;
       const dy = e.clientY - dragStart.y;
       setPan(clampPan(dragPanStart.x + dx, dragPanStart.y + dy, zoom));
     }
-  }, [dragging, dragStart, dragPanStart, zoom, clampPan]);
+  }, [selectionMode, dragging, dragStart, dragPanStart, zoom, clampPan]);
 
-  const handleMouseUp = useCallback(() => setDragging(false), []);
+  const handleMouseUp = useCallback((e) => {
+    setDragging(false);
+    if (!selectionMode || !selectionStartRef.current) return;
+    const start = selectionStartRef.current;
+    selectionStartRef.current = null;
+    const rect = containerRef.current.getBoundingClientRect();
+    const imageLeft = dims.cw / 2 + pan.x - dims.iw * zoom / 2;
+    const imageTop = dims.ch / 2 + pan.y - dims.ih * zoom / 2;
+    const end = {
+      x: Math.max(0, Math.min(dims.iw, (e.clientX - rect.left - imageLeft) / zoom)),
+      y: Math.max(0, Math.min(dims.ih, (e.clientY - rect.top - imageTop) / zoom)),
+    };
+    const bbox = { x0: Math.min(start.x, end.x), y0: Math.min(start.y, end.y), x1: Math.max(start.x, end.x), y1: Math.max(start.y, end.y) };
+    if (bbox.x1 - bbox.x0 >= 8 && bbox.y1 - bbox.y0 >= 8 && onZoneSelected) onZoneSelected({ bbox, imageData: src });
+  }, [selectionMode, dims, pan, zoom, onZoneSelected, src]);
 
   const zoomIn = useCallback(() => {
     const z = Math.min(5, zoom * 1.25);
@@ -159,7 +194,7 @@ function ZoomableImage({ src, alt, focusBox }) {
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
-      style={{ cursor: isZoomed ? (dragging ? 'grabbing' : 'grab') : 'default' }}
+      style={{ cursor: selectionMode ? 'crosshair' : isZoomed ? (dragging ? 'grabbing' : 'grab') : 'default' }}
     >
       <img
         ref={imgRef}
@@ -171,8 +206,16 @@ function ZoomableImage({ src, alt, focusBox }) {
           transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
           transformOrigin: 'center center',
         }}
-        draggable={false}
+      draggable={false}
       />
+      {selection && selectionMode && (
+        <div className="absolute border-2 border-cyan-400 bg-cyan-300/20 pointer-events-none" style={{
+          left: Math.min(selection.x0, selection.x1),
+          top: Math.min(selection.y0, selection.y1),
+          width: Math.abs(selection.x1 - selection.x0),
+          height: Math.abs(selection.y1 - selection.y0),
+        }} />
+      )}
       <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-black/60 rounded-lg px-2 py-1">
         <button
           onClick={zoomOut}
@@ -208,13 +251,22 @@ export default function OcrValidator({ projectId, images, sources = [], paragrap
 
   const [currentPage, setCurrentPage] = useState(pages.length > 0 ? pages[0] : 1);
   const [edited, setEdited] = useState({});
-  const [tableOverrides, setTableOverrides] = useState({});
+  const [paragraphOverrides, setParagraphOverrides] = useState({});
   const [focusBbox, setFocusBbox] = useState(null);
   const [imageUrl, setImageUrl] = useState(null);
+  const [displayImageUrl, setDisplayImageUrl] = useState(null);
   const [pdfUrl, setPdfUrl] = useState(null);
+  const [pdfFile, setPdfFile] = useState(null);
+  const [pageRotation, setPageRotation] = useState(0);
+  const [zoneTarget, setZoneTarget] = useState(null);
+  const [zoneMode, setZoneMode] = useState('text');
+  const [zoneLoading, setZoneLoading] = useState(false);
+  const [zoneResult, setZoneResult] = useState(null);
+  const [zoneError, setZoneError] = useState('');
   const [previewLoading, setPreviewLoading] = useState(false);
   const textareaRefs = useRef({});
   const imageUrlRef = useRef(null);
+  const rotatedImageUrlRef = useRef(null);
   const pdfUrlRef = useRef(null);
 
   const pageParagraphs = paragraphs.filter((p) => p.page === currentPage);
@@ -250,6 +302,38 @@ export default function OcrValidator({ projectId, images, sources = [], paragrap
     return () => { cancelled = true; };
   }, [projectId, currentPage, showSelectablePdf]);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (rotatedImageUrlRef.current) {
+      URL.revokeObjectURL(rotatedImageUrlRef.current);
+      rotatedImageUrlRef.current = null;
+    }
+    if (!imageUrl || pageRotation === 0) {
+      setDisplayImageUrl(imageUrl);
+      return undefined;
+    }
+    const image = new Image();
+    image.onload = () => {
+      if (cancelled) return;
+      const swap = pageRotation % 180 !== 0;
+      const canvas = document.createElement('canvas');
+      canvas.width = swap ? image.naturalHeight : image.naturalWidth;
+      canvas.height = swap ? image.naturalWidth : image.naturalHeight;
+      const context = canvas.getContext('2d');
+      context.translate(canvas.width / 2, canvas.height / 2);
+      context.rotate(pageRotation * Math.PI / 180);
+      context.drawImage(image, -image.naturalWidth / 2, -image.naturalHeight / 2);
+      canvas.toBlob((blob) => {
+        if (!blob || cancelled) return;
+        const url = URL.createObjectURL(blob);
+        rotatedImageUrlRef.current = url;
+        setDisplayImageUrl(url);
+      }, 'image/png');
+    };
+    image.src = imageUrl;
+    return () => { cancelled = true; };
+  }, [imageUrl, pageRotation]);
+
   // Native PDF preview keeps text selectable and avoids raster snapshots.
   useEffect(() => {
     let cancelled = false;
@@ -259,6 +343,7 @@ export default function OcrValidator({ projectId, images, sources = [], paragrap
         pdfUrlRef.current = null;
       }
       setPdfUrl(null);
+      setPdfFile(null);
 
       if (!projectId || !showSelectablePdf || !pdfSource) return;
       setPreviewLoading(true);
@@ -268,6 +353,7 @@ export default function OcrValidator({ projectId, images, sources = [], paragrap
         const url = URL.createObjectURL(file);
         pdfUrlRef.current = url;
         setPdfUrl(url);
+        setPdfFile(file);
       }
       setPreviewLoading(false);
     })();
@@ -285,8 +371,19 @@ export default function OcrValidator({ projectId, images, sources = [], paragrap
         URL.revokeObjectURL(pdfUrlRef.current);
         pdfUrlRef.current = null;
       }
+      if (rotatedImageUrlRef.current) {
+        URL.revokeObjectURL(rotatedImageUrlRef.current);
+        rotatedImageUrlRef.current = null;
+      }
     };
   }, []);
+
+  useEffect(() => {
+    setPageRotation(0);
+    setZoneTarget(null);
+    setZoneResult(null);
+    setZoneError('');
+  }, [currentPage]);
 
   // Reset to first page if pages change
   useEffect(() => {
@@ -302,7 +399,7 @@ export default function OcrValidator({ projectId, images, sources = [], paragrap
   const updateTableCell = (para, ri, ci, val) => {
     const raw = edited[para.index] !== undefined
       ? edited[para.index]
-      : (tableOverrides[para.index]?.text || para.text || '');
+      : (paragraphOverrides[para.index]?.text || para.text || '');
     const rows = raw ? raw.split('\n').map(l => l.split('\t')) : [];
     if (rows[ri]) rows[ri][ci] = val;
     const joined = rows.map(r => r.join('\t')).join('\n');
@@ -312,16 +409,71 @@ export default function OcrValidator({ projectId, images, sources = [], paragrap
   const getTableRows = (para) => {
     const raw = edited[para.index] !== undefined
       ? edited[para.index]
-      : (tableOverrides[para.index]?.text || para.text || '');
+      : (paragraphOverrides[para.index]?.text || para.text || '');
     return raw.split('\n').map(l => l.split('\t'));
   };
 
   const applyTableRescan = (para, table) => {
-    setTableOverrides((prev) => ({ ...prev, [para.index]: table }));
+    setParagraphOverrides((prev) => ({ ...prev, [para.index]: { ...para, ...table } }));
     setEdited((prev) => ({ ...prev, [para.index]: table.text }));
   };
 
-  const getText = (para) => edited[para.index] !== undefined ? edited[para.index] : para.text;
+  const getText = (para) => edited[para.index] !== undefined
+    ? edited[para.index]
+    : (paragraphOverrides[para.index]?.text ?? para.text);
+
+  const startZoneRescan = (para, mode) => {
+    setZoneTarget(para.index);
+    setZoneMode(mode || (para.type === 'table' ? 'table' : 'text'));
+    setZoneResult(null);
+    setZoneError('');
+  };
+
+  const handleZoneSelected = useCallback(async ({ bbox, imageData }) => {
+    if (zoneTarget == null || !imageData) return;
+    setZoneLoading(true);
+    setZoneError('');
+    setZoneResult(null);
+    try {
+      const result = await reOcrRegionDetailed(imageData, bbox, { tableMode: zoneMode, padding: 0 });
+      setZoneResult({ ...result, bbox });
+    } catch (error) {
+      setZoneError(error?.message || 'Zone re-scan failed.');
+    } finally {
+      setZoneLoading(false);
+    }
+  }, [zoneTarget, zoneMode]);
+
+  const applyZoneResult = () => {
+    if (zoneTarget == null || !zoneResult) return;
+    const para = paragraphs.find((entry) => entry.index === zoneTarget);
+    if (!para) return;
+    if (zoneMode === 'table') {
+      const fallbackRows = zoneResult.text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+        const cells = line.split(/\t|\s{2,}/).map((cell) => cell.trim()).filter(Boolean);
+        return cells.length ? cells : [''];
+      });
+      const rows = zoneResult.table?.rows || fallbackRows;
+      const colCount = Math.max(1, ...rows.map((row) => row.length));
+      const normalized = rows.map((row) => Array.from({ length: colCount }, (_, index) => row[index] || ''));
+      applyTableRescan(para, {
+        ...zoneResult.table,
+        type: 'table',
+        rows: normalized,
+        colCount,
+        text: normalized.map((row) => row.join('\t')).join('\n'),
+        bbox: zoneResult.bbox,
+      });
+    } else {
+      setParagraphOverrides((previous) => ({
+        ...previous,
+        [para.index]: { ...para, type: undefined, rows: undefined, colCount: undefined, cells: undefined, text: zoneResult.text, bbox: zoneResult.bbox },
+      }));
+      setEdited((previous) => ({ ...previous, [para.index]: zoneResult.text }));
+    }
+    setZoneTarget(null);
+    setZoneResult(null);
+  };
 
   const handleSave = async () => {
     console.log('[OcrValidator] handleSave START', {
@@ -331,7 +483,7 @@ export default function OcrValidator({ projectId, images, sources = [], paragrap
       editedSample: Object.entries(edited).slice(0, 2),
     });
     const updated = paragraphs.map((p) => {
-      const override = tableOverrides[p.index];
+      const override = paragraphOverrides[p.index];
       const entry = { ...p, ...(override || {}), text: edited[p.index] !== undefined ? edited[p.index] : (override?.text || p.text) };
       if (entry.type === 'table' && (edited[p.index] !== undefined || override)) {
         const rows = entry.text.split('\n').map(l => l.split('\t'));
@@ -347,11 +499,11 @@ export default function OcrValidator({ projectId, images, sources = [], paragrap
     const success = await onSaveParagraphs(updated);
     if (success) {
       setEdited({});
-      setTableOverrides({});
+      setParagraphOverrides({});
     }
   };
 
-  const hasEdits = Object.keys(edited).length > 0 || Object.keys(tableOverrides).length > 0;
+  const hasEdits = Object.keys(edited).length > 0 || Object.keys(paragraphOverrides).length > 0;
 
   return (
     <div className="h-full flex flex-col">
@@ -372,6 +524,11 @@ export default function OcrValidator({ projectId, images, sources = [], paragrap
           </button>
         ))}
         <div className="ml-auto flex items-center gap-3">
+          <div className="flex items-center gap-1">
+            <button onClick={() => setPageRotation((value) => (value + 270) % 360)} className="text-xs px-2 py-1 rounded border border-gray-300 bg-white hover:bg-gray-200" title="Rotate page left">↶</button>
+            <button onClick={() => setPageRotation((value) => (value + 90) % 360)} className="text-xs px-2 py-1 rounded border border-gray-300 bg-white hover:bg-gray-200" title="Rotate page right">↷</button>
+            {pageRotation !== 0 && <span className="text-[10px] text-cyan-700">{pageRotation}°</span>}
+          </div>
           <span className="text-xs text-gray-500">
             {pageParagraphs.length} paragraph{pageParagraphs.length !== 1 ? 's' : ''}
           </span>
@@ -389,11 +546,22 @@ export default function OcrValidator({ projectId, images, sources = [], paragrap
         </div>
       </div>
 
+      {zoneTarget != null && (
+        <div className="bg-cyan-50 border-b border-cyan-200 px-4 py-2 flex items-center gap-3 text-xs text-cyan-900">
+          <span className="font-medium">Draw a rectangle on the left for ¶{zoneTarget + 1}</span>
+          <button onClick={() => setZoneMode('text')} className={`px-2 py-1 rounded ${zoneMode === 'text' ? 'bg-cyan-700 text-white' : 'bg-white border border-cyan-300'}`}>Text / handwriting</button>
+          <button onClick={() => setZoneMode('table')} className={`px-2 py-1 rounded ${zoneMode === 'table' ? 'bg-cyan-700 text-white' : 'bg-white border border-cyan-300'}`}>Table</button>
+          {zoneLoading && <span className="animate-pulse">Scanning selected zone…</span>}
+          {zoneError && <span className="text-red-700">{zoneError}</span>}
+          <button onClick={() => { setZoneTarget(null); setZoneResult(null); setZoneError(''); }} className="ml-auto text-gray-600 hover:text-gray-900">Cancel</button>
+        </div>
+      )}
+
       {/* Split panes */}
       <div className="flex-1 flex overflow-hidden">
         {/* Left: selectable PDF for native text, image for OCR sources */}
         <div className="w-1/2 border-r border-gray-300">
-          {showSelectablePdf && pdfUrl ? (
+          {showSelectablePdf && pdfUrl && pdfFile ? (
             <div className="h-full flex flex-col bg-gray-800">
               <div className="flex items-center justify-between px-3 py-1.5 bg-gray-900 text-xs text-gray-300">
                 <span className="truncate" title={pdfSource.filename}>{pdfSource.filename} · page {sourcePage}</span>
@@ -406,15 +574,25 @@ export default function OcrValidator({ projectId, images, sources = [], paragrap
                   Open PDF
                 </a>
               </div>
-              <iframe
-                key={`${pdfSource.id}-${sourcePage}`}
-                src={`${pdfUrl}#page=${sourcePage}&zoom=page-width`}
-                title={`${pdfSource.filename} page ${sourcePage}`}
-                className="flex-1 w-full bg-white border-0"
-              />
+              <div className="flex-1 min-h-0">
+                <PdfPageCanvas
+                  key={`${pdfSource.id}-${sourcePage}`}
+                  file={pdfFile}
+                  pageNumber={sourcePage}
+                  rotation={pageRotation}
+                  selectionMode={zoneTarget != null}
+                  onZoneSelected={handleZoneSelected}
+                />
+              </div>
             </div>
-          ) : imageUrl ? (
-            <ZoomableImage src={imageUrl} alt={`Page ${currentPage}`} focusBox={focusBbox} />
+          ) : displayImageUrl ? (
+            <ZoomableImage
+              src={displayImageUrl}
+              alt={`Page ${currentPage}`}
+              focusBox={focusBbox}
+              selectionMode={zoneTarget != null}
+              onZoneSelected={handleZoneSelected}
+            />
           ) : (
             <div className="h-full flex items-center justify-center text-gray-400 text-sm bg-gray-800">
               {previewLoading
@@ -438,28 +616,37 @@ export default function OcrValidator({ projectId, images, sources = [], paragrap
               const rows = Math.max(2, text.split('\n').length, Math.ceil(text.length / 60));
               const isEdited = edited[p.index] !== undefined && edited[p.index] !== p.text;
               if (!textareaRefs.current[p.index]) textareaRefs.current[p.index] = React.createRef();
-              const effectiveTable = tableOverrides[p.index] || (p.type === 'table' ? p : null);
+              const effectiveParagraph = paragraphOverrides[p.index] || p;
+              const effectiveTable = effectiveParagraph.type === 'table' ? effectiveParagraph : null;
               const isTable = !!effectiveTable;
               return (
                 <div key={p.index} className="mb-3">
                   <div className="flex items-center gap-2 mb-0.5">
                     {!isTable && <SuggestionButton textareaRef={textareaRefs.current[p.index]} />}
-                    {!isTable && <ReScanButton
+                    {!isTable && pageRotation === 0 && <ReScanButton
                       textareaRef={textareaRefs.current[p.index]}
-                      imageData={imageUrl}
+                      imageData={displayImageUrl}
                       lines={p.lines}
                       onFocusImage={setFocusBbox}
                       paraIndex={idx}
                       totalParas={pageParagraphs.length}
                       disabled={p.source === 'pdf_text'}
                     />}
-                    {isTable && <TableRescanButton
-                      imageData={imageUrl}
+                    {isTable && p.source !== 'pdf_text' && pageRotation === 0 && <TableRescanButton
+                      imageData={displayImageUrl}
                       bbox={effectiveTable.bbox || p.bbox}
                       disabled={p.source === 'pdf_text'}
                       onFocusImage={setFocusBbox}
                       onApply={(table) => applyTableRescan(p, table)}
                     />}
+                    <button
+                      type="button"
+                      onClick={() => startZoneRescan(effectiveParagraph, isTable ? 'table' : 'text')}
+                      className="text-xs px-2 py-0.5 rounded bg-cyan-100 text-cyan-800 hover:bg-cyan-200"
+                      title="Draw the exact source area to re-scan into this paragraph"
+                    >
+                      Select zone
+                    </button>
                     <span className="text-[11px] text-gray-400 font-mono">{isTable ? '⊞' : '¶'}{p.index + 1}</span>
                     {isTable && <span className="text-[10px] text-indigo-500 font-medium">Table</span>}
                     {isEdited && <span className="text-[11px] text-amber-600 font-medium">edited</span>}
@@ -504,6 +691,30 @@ export default function OcrValidator({ projectId, images, sources = [], paragrap
           )}
         </div>
       </div>
+      {zoneResult && (
+        <div className="fixed inset-0 z-[9999] bg-black/45 flex items-center justify-center p-6">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[85vh] flex flex-col">
+            <div className="px-4 py-3 border-b flex items-center gap-2">
+              <span className="font-medium text-gray-800">Zone re-scan preview</span>
+              <span className="text-xs text-gray-500">{zoneMode === 'table' ? 'Table mode' : 'Text / handwriting mode'}</span>
+              {zoneResult.orientation ? <span className="text-xs text-cyan-700">orientation corrected {zoneResult.orientation}°</span> : null}
+            </div>
+            <div className="p-4 overflow-auto">
+              {zoneMode === 'table' && zoneResult.table ? (
+                <table className="w-full border-collapse text-sm">
+                  <tbody>{zoneResult.table.rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, columnIndex) => <td key={columnIndex} className="border border-gray-300 p-2 align-top whitespace-pre-wrap">{cell}</td>)}</tr>)}</tbody>
+                </table>
+              ) : (
+                <textarea readOnly value={zoneResult.text} className="w-full min-h-[280px] border border-gray-300 rounded p-3 text-sm whitespace-pre-wrap" />
+              )}
+            </div>
+            <div className="px-4 py-3 border-t flex justify-end gap-2">
+              <button onClick={() => setZoneResult(null)} className="px-3 py-1.5 text-sm rounded border border-gray-300">Draw again</button>
+              <button onClick={applyZoneResult} className="px-3 py-1.5 text-sm rounded bg-cyan-700 text-white hover:bg-cyan-800">Apply to paragraph</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

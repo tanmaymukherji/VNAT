@@ -2,12 +2,12 @@
   "name": "translation-tool",
   "homepage": "https://tanmaymukherji.github.io/T3",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test:tables": "node --test scripts/test-table-structure.mjs",
+    "test:tables": "node --test scripts/test-table-structure.mjs scripts/test-pdf-grid-tables.mjs scripts/test-ocr-table-parser.mjs",
     "preview": "vite preview",
     "deploy": "npm run build && npx gh-pages -d dist"
   },

@@ -1,5 +1,5 @@
 import nspell from 'nspell';
-import CONFIG from './config';
+import CONFIG from './config.js';
 
 let spellInstance = null;
 let spellPromise = null;
@@ -213,26 +213,50 @@ function loadImage(src) {
   });
 }
 
-export async function reOcrRegion(imageData, bbox, padding) {
+export function parseMarkdownTable(text) {
+  const lines = String(text || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const pipeLines = lines.filter((line) => line.includes('|'));
+  const candidates = pipeLines.length >= 2 ? pipeLines : lines;
+  const rows = candidates
+    .filter((line) => !/^\|?\s*:?-{3,}/.test(line))
+    .map((line) => {
+      if (line.includes('|')) return line.replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim());
+      return line.split(/\t|\s{2,}/).map((cell) => cell.trim()).filter(Boolean);
+    })
+    .filter((row) => row.length >= 2);
+  const colCount = Math.max(0, ...rows.map((row) => row.length));
+  if (rows.length < 2 || colCount < 2) return null;
+  const normalized = rows.map((row) => Array.from({ length: colCount }, (_, index) => row[index] || ''));
+  return {
+    type: 'table',
+    rows: normalized,
+    colCount,
+    text: normalized.map((row) => row.join('\t')).join('\n'),
+  };
+}
+
+export async function reOcrRegionDetailed(imageData, bbox, options = {}) {
   const img = await loadImage(imageData);
   const iw = img.naturalWidth;
   const ih = img.naturalHeight;
 
-  const pad = padding !== undefined ? padding : Math.max(8, (bbox.x1 - bbox.x0) * 0.3);
+  const padding = typeof options === 'number' ? options : options.padding;
+  const tableMode = typeof options === 'object' && !!options.tableMode;
+  const pad = padding !== undefined ? padding : Math.max(8, (bbox.x1 - bbox.x0) * 0.08);
   const sx = Math.max(0, bbox.x0 - pad);
   const sy = Math.max(0, bbox.y0 - pad);
   const sw = Math.min(iw - sx, (bbox.x1 - bbox.x0) + pad * 2);
   const sh = Math.min(ih - sy, (bbox.y1 - bbox.y0) + pad * 2);
-  if (sw < 4 || sh < 4) return '';
+  if (sw < 4 || sh < 4) return { text: '', orientation: 0, table: null };
 
-  const MAX_BYTES = 1.4 * 1024 * 1024; // 1.4 MB safe margin under 1.5 MB limit
+  const MAX_BYTES = 900 * 1024; // safe margin under the free API's 1 MB request limit
 
   function renderRegion(w, h) {
     const c = document.createElement('canvas');
     c.width = w;
     c.height = h;
     c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, w, h);
-    return c.toDataURL('image/png');
+    return tableMode ? c.toDataURL('image/jpeg', 0.86) : c.toDataURL('image/png');
   }
 
   let b64 = renderRegion(sw, sh);
@@ -247,13 +271,15 @@ export async function reOcrRegion(imageData, bbox, padding) {
 
   const apiKey = CONFIG.OCR_SPACE_API_KEY;
 
-  if (!apiKey) return '';
+  if (!apiKey) return { text: '', orientation: 0, table: null };
 
   const params = new URLSearchParams({
     apikey: apiKey,
     OCREngine: '3',
     base64Image: b64,
     isOverlayRequired: 'false',
+    detectOrientation: 'true',
+    isTable: String(tableMode),
     scale: 'true',
   });
 
@@ -277,10 +303,21 @@ export async function reOcrRegion(imageData, bbox, padding) {
   }
 
   if (data.OCRExitCode === 1 && data.ParsedResults && data.ParsedResults.length > 0) {
-    return data.ParsedResults[0].ParsedText.trim();
+    const parsed = data.ParsedResults[0];
+    const text = parsed.ParsedText.trim();
+    return {
+      text,
+      orientation: parsed.TextOrientation ?? 0,
+      table: tableMode ? parseMarkdownTable(text) : null,
+    };
   }
   const errMsg = Array.isArray(data.ErrorMessage)
     ? data.ErrorMessage.join('; ')
     : data.ErrorMessage || `OCR.space exit code ${data.OCRExitCode}`;
   throw new Error(errMsg);
+}
+
+export async function reOcrRegion(imageData, bbox, padding) {
+  const result = await reOcrRegionDetailed(imageData, bbox, { padding });
+  return result.text;
 }
