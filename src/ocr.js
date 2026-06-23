@@ -1,5 +1,5 @@
 import { createWorker } from 'tesseract.js';
-import { bboxOverlapRatio, collectTesseractWords, detectTableBlocks, unionBboxes } from './table-structure';
+import { bboxOverlapRatio, collectTesseractWords, detectTableBlocks, unionBboxes } from './table-structure.js';
 
 let worker = null;
 let progressCallback = null;
@@ -88,13 +88,28 @@ function groupLinesIntoParagraphs(lines) {
   return paragraphs;
 }
 
-export async function ocrImage(imageFile, onProgressFn) {
+export async function ocrImage(imageFile, onProgressFn, options = {}) {
   if (onProgressFn) progressCallback = onProgressFn;
 
   const w = await getWorker();
   // Tesseract.js v6+ returns text only by default. Explicitly request blocks so
   // word bounding boxes are available for paragraph and table reconstruction.
-  const { data } = await w.recognize(imageFile, {}, { text: true, blocks: true });
+  let { data } = await w.recognize(imageFile, {}, { text: true, blocks: true });
+
+  // Ruled tables can cause automatic segmentation to see only a few isolated
+  // cells. On sparse pages (and explicit table rescans), retry with sparse-text
+  // segmentation and keep it only when it recovers materially more words.
+  const initialWordCount = collectTesseractWords(data.blocks || []).length;
+  if (options.forceSparse || initialWordCount < 12) {
+    await w.setParameters({ tessedit_pageseg_mode: '12', preserve_interword_spaces: '1' });
+    try {
+      const sparseResult = await w.recognize(imageFile, {}, { text: true, blocks: true });
+      const sparseWordCount = collectTesseractWords(sparseResult.data.blocks || []).length;
+      if (sparseWordCount >= initialWordCount + 3) data = sparseResult.data;
+    } finally {
+      await w.setParameters({ tessedit_pageseg_mode: '3', preserve_interword_spaces: '0' });
+    }
+  }
 
   let paragraphs = [];
 
@@ -222,7 +237,7 @@ export async function reOcrTableRegion(imageData, bbox, onProgressFn) {
   canvas.height = height;
   canvas.getContext('2d').drawImage(source, x, y, width, height, 0, 0, width, height);
   const blob = await new Promise((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error('Could not prepare the table image.')), 'image/png'));
-  const result = await ocrImage(blob, onProgressFn);
+  const result = await ocrImage(blob, onProgressFn, { forceSparse: true });
   const table = result.paragraphs.find((paragraph) => paragraph.type === 'table');
   if (!table) throw new Error('No stable table grid was found in this region.');
   const offsetBox = (box) => box ? ({ x0: box.x0 + x, y0: box.y0 + y, x1: box.x1 + x, y1: box.y1 + y }) : undefined;

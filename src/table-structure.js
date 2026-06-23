@@ -198,7 +198,9 @@ export function detectTableBlocks(words = []) {
     }
     if (current.length) {
       const previous = current[current.length - 1];
-      const maxGap = Math.max(previous.height, row.height) * 3.5;
+      // Table cells often include generous vertical padding, especially when
+      // grid lines are present, so row baselines may be several glyph-heights apart.
+      const maxGap = Math.max(previous.height, row.height) * 5;
       if (row.bbox.y0 - previous.bbox.y1 > maxGap) flush();
     }
     current.push(row);
