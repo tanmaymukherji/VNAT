@@ -4,11 +4,9 @@ import { saveAs } from 'file-saver';
 
 const BRAND_BLUE = '1e3a5f';
 
-const NEEDS_COLUMNS = ['Need', 'Category', 'Priority', 'Source', 'Suggested Action', 'Timeline', 'Responsible Party', 'Budget Estimate', 'Status', 'Remarks'];
-
 function buildNeedsTable(needs) {
   const headerRow = new TableRow({
-    children: NEEDS_COLUMNS.map(col => new TableCell({
+    children: ['Need', 'Category', 'Priority', 'Source', 'Suggested Action', 'Timeline', 'Responsible Party', 'Budget Estimate', 'Status', 'Remarks'].map(col => new TableCell({
       children: [new Paragraph({ children: [new TextRun({ text: col, bold: true, color: 'ffffff', size: 18 })] })],
       shading: { fill: BRAND_BLUE, type: 'clear' },
       margins: { top: 60, bottom: 60, left: 60, right: 60 },
@@ -166,19 +164,35 @@ export function downloadReportXlsx(analysisResult, imageDataUrls, currentLang = 
 
   try {
     const wb = utils.book_new();
+    const encCell = utils.encode_cell;
+    const encRange = utils.encode_range;
 
-    const needsData = [NEEDS_COLUMNS];
-    for (const n of d.needs || []) {
-      needsData.push([
+    // Build Needs sheet manually using direct cell assignment
+    const wsNeeds = {};
+    const needsCols = ['Need', 'Category', 'Priority', 'Source', 'Suggested Action', 'Timeline', 'Responsible Party', 'Budget Estimate', 'Status', 'Remarks'];
+    const needs = d.needs || [];
+    const numNeedsRows = 1 + needs.length;
+    const numNeedsCols = needsCols.length;
+
+    for (let c = 0; c < numNeedsCols; c++) {
+      wsNeeds[encCell({ r: 0, c })] = { v: needsCols[c], t: 's' };
+    }
+    for (let r = 0; r < needs.length; r++) {
+      const n = needs[r];
+      const vals = [
         n.need || '', n.category || '', n.priority || '',
         n.source || '', n.suggested_action || '', n.timeline || '',
         n.responsible_party || '', n.budget_estimate || '', n.status || '', n.remarks || '',
-      ]);
+      ];
+      for (let c = 0; c < vals.length; c++) {
+        wsNeeds[encCell({ r: r + 1, c })] = { v: vals[c], t: typeof vals[c] === 'number' ? 'n' : 's' };
+      }
     }
-    const wsNeeds = utils.aoa_to_sheet(needsData);
-    wsNeeds['!cols'] = [50, 22, 10, 30, 35, 15, 22, 15, 12, 35];
+    wsNeeds['!ref'] = encRange({ s: { r: 0, c: 0 }, e: { r: numNeedsRows - 1, c: numNeedsCols - 1 } });
+    wsNeeds['!cols'] = needsCols.map(() => ({ wch: 20 }));
     utils.book_append_sheet(wb, wsNeeds, 'Needs');
 
+    // Build Summary sheet
     const labels = {
       villageDetails: currentLang === 'hi' ? 'गाँव विवरण' : 'Village Details',
       villageName: currentLang === 'hi' ? 'गाँव का नाम' : 'Village Name',
@@ -190,7 +204,7 @@ export function downloadReportXlsx(analysisResult, imageDataUrls, currentLang = 
       imagesLabel: currentLang === 'hi' ? 'चित्र' : 'Images',
     };
 
-    const sumData = [
+    const sumRows = [
       [labels.villageDetails, ''],
       [labels.villageName, d.village_name || ''],
       [labels.districtState, d.district_state || ''],
@@ -205,36 +219,44 @@ export function downloadReportXlsx(analysisResult, imageDataUrls, currentLang = 
       ['', ''],
       [labels.imagesLabel + ' (' + (imageDataUrls || []).length + ')', (imageDataUrls || []).map(i => i.name).join(', ') || 'None'],
     ];
-    const wsSum = utils.aoa_to_sheet(sumData);
-    wsSum['!cols'] = [25, 100];
+
+    const wsSum = {};
+    for (let r = 0; r < sumRows.length; r++) {
+      const row = sumRows[r];
+      for (let c = 0; c < row.length; c++) {
+        const val = row[c];
+        if (val === undefined || val === null) continue;
+        wsSum[encCell({ r, c })] = { v: val, t: typeof val === 'number' ? 'n' : 's' };
+      }
+    }
+    wsSum['!ref'] = encRange({ s: { r: 0, c: 0 }, e: { r: sumRows.length - 1, c: 1 } });
+    wsSum['!cols'] = [{ wch: 25 }, { wch: 100 }];
     utils.book_append_sheet(wb, wsSum, 'Summary');
 
+    // Images sheet
     if (imageDataUrls && imageDataUrls.length > 0) {
-      const imgRows = [[currentLang === 'hi' ? 'चित्र फ़ाइलें' : 'Image Files']];
-      imageDataUrls.forEach(img => imgRows.push([img.name]));
-      const wsImg = utils.aoa_to_sheet(imgRows);
-      wsImg['!cols'] = [50];
+      const wsImg = {};
+      const imgHeader = currentLang === 'hi' ? 'चित्र फ़ाइलें' : 'Image Files';
+      wsImg[encCell({ r: 0, c: 0 })] = { v: imgHeader, t: 's' };
+      for (let r = 0; r < imageDataUrls.length; r++) {
+        wsImg[encCell({ r: r + 1, c: 0 })] = { v: imageDataUrls[r].name, t: 's' };
+      }
+      wsImg['!ref'] = encRange({ s: { r: 0, c: 0 }, e: { r: imageDataUrls.length, c: 0 } });
+      wsImg['!cols'] = [{ wch: 50 }];
       utils.book_append_sheet(wb, wsImg, 'Images');
     }
 
+    // Write and download
     const name = (d.village_name || 'village_report').replace(/[\\/:*?"<>|]/g, '_');
     const filename = name + '_report.xlsx';
+    console.log('[XLSX] Sheets:', wb.SheetNames);
 
-    // Validate workbook has sheets before writing
-    if (wb.SheetNames.length === 0) {
-      throw new Error('Workbook has no sheets');
-    }
-    console.log('[XLSX] Generating with', wb.SheetNames.length, 'sheets:', wb.SheetNames.join(', '));
-
-    // Write xlsx as binary string, convert to Uint8Array, then Blob
     const binStr = write(wb, { bookType: 'xlsx', type: 'binary' });
-    console.log('[XLSX] Binary string length:', binStr.length);
+    console.log('[XLSX] Binary size:', binStr.length);
 
     const bytes = new Uint8Array(binStr.length);
     for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i) & 0xFF;
     const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-
-    // Download using file-saver (same approach as DOCX export)
     saveAs(blob, filename);
   } catch (err) {
     console.error('[XLSX] Export error:', err);
