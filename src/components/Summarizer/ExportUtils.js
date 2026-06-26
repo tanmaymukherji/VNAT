@@ -162,66 +162,82 @@ export async function downloadReportDocx(analysisResult, imageDataUrls, currentL
 
 export function downloadReportXlsx(analysisResult, imageDataUrls, currentLang = 'en') {
   const d = analysisResult;
-  if (!d) throw new Error('No analysis result');
+  if (!d) { console.error('[XLSX] No analysis result'); throw new Error('No analysis result'); }
 
-  const wb = utils.book_new();
+  try {
+    const wb = utils.book_new();
 
-  const needsData = [NEEDS_COLUMNS];
-  for (const n of d.needs || []) {
-    needsData.push([
-      n.need || '', n.category || '', n.priority || '',
-      n.source || '', n.suggested_action || '', n.timeline || '',
-      n.responsible_party || '', n.budget_estimate || '', n.status || '', n.remarks || '',
-    ]);
+    const needsData = [NEEDS_COLUMNS];
+    for (const n of d.needs || []) {
+      needsData.push([
+        n.need || '', n.category || '', n.priority || '',
+        n.source || '', n.suggested_action || '', n.timeline || '',
+        n.responsible_party || '', n.budget_estimate || '', n.status || '', n.remarks || '',
+      ]);
+    }
+    const wsNeeds = utils.aoa_to_sheet(needsData);
+    wsNeeds['!cols'] = [50, 22, 10, 30, 35, 15, 22, 15, 12, 35];
+    utils.book_append_sheet(wb, wsNeeds, 'Needs');
+
+    const labels = {
+      villageDetails: currentLang === 'hi' ? 'गाँव विवरण' : 'Village Details',
+      villageName: currentLang === 'hi' ? 'गाँव का नाम' : 'Village Name',
+      districtState: currentLang === 'hi' ? 'ज़िला / राज्य' : 'District / State',
+      population: currentLang === 'hi' ? 'आबादी' : 'Population',
+      languages: currentLang === 'hi' ? 'भाषाएँ' : 'Languages',
+      villageContext: currentLang === 'hi' ? 'गाँव संदर्भ' : 'Village Context',
+      keyFindings: currentLang === 'hi' ? 'मुख्य निष्कर्ष' : 'Key Findings',
+      imagesLabel: currentLang === 'hi' ? 'चित्र' : 'Images',
+    };
+
+    const sumData = [
+      [labels.villageDetails, ''],
+      [labels.villageName, d.village_name || ''],
+      [labels.districtState, d.district_state || ''],
+      [labels.population, d.population || ''],
+      [labels.languages, (d.languages_detected || []).join(', ')],
+      ['', ''],
+      [labels.villageContext, ''],
+      ...(d.context || '').split('\n\n').filter(Boolean).map(p => [p]),
+      ['', ''],
+      [labels.keyFindings, ''],
+      ...(d.key_findings || []).map(f => [f]),
+      ['', ''],
+      [labels.imagesLabel + ' (' + (imageDataUrls || []).length + ')', (imageDataUrls || []).map(i => i.name).join(', ') || 'None'],
+    ];
+    const wsSum = utils.aoa_to_sheet(sumData);
+    wsSum['!cols'] = [25, 100];
+    utils.book_append_sheet(wb, wsSum, 'Summary');
+
+    if (imageDataUrls && imageDataUrls.length > 0) {
+      const imgRows = [[currentLang === 'hi' ? 'चित्र फ़ाइलें' : 'Image Files']];
+      imageDataUrls.forEach(img => imgRows.push([img.name]));
+      const wsImg = utils.aoa_to_sheet(imgRows);
+      wsImg['!cols'] = [50];
+      utils.book_append_sheet(wb, wsImg, 'Images');
+    }
+
+    const name = (d.village_name || 'village_report').replace(/[\\/:*?"<>|]/g, '_');
+    const filename = name + '_report.xlsx';
+
+    // Validate workbook has sheets before writing
+    if (wb.SheetNames.length === 0) {
+      throw new Error('Workbook has no sheets');
+    }
+    console.log('[XLSX] Generating with', wb.SheetNames.length, 'sheets:', wb.SheetNames.join(', '));
+
+    // Write xlsx as binary string, convert to Uint8Array, then Blob
+    const binStr = write(wb, { bookType: 'xlsx', type: 'binary' });
+    console.log('[XLSX] Binary string length:', binStr.length);
+
+    const bytes = new Uint8Array(binStr.length);
+    for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i) & 0xFF;
+    const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+
+    // Download using file-saver (same approach as DOCX export)
+    saveAs(blob, filename);
+  } catch (err) {
+    console.error('[XLSX] Export error:', err);
+    throw err;
   }
-  const wsNeeds = utils.aoa_to_sheet(needsData);
-  wsNeeds['!cols'] = [50, 22, 10, 30, 35, 15, 22, 15, 12, 35];
-  utils.book_append_sheet(wb, wsNeeds, 'Needs');
-
-  const labels = {
-    villageDetails: currentLang === 'hi' ? 'गाँव विवरण' : 'Village Details',
-    villageName: currentLang === 'hi' ? 'गाँव का नाम' : 'Village Name',
-    districtState: currentLang === 'hi' ? 'ज़िला / राज्य' : 'District / State',
-    population: currentLang === 'hi' ? 'आबादी' : 'Population',
-    languages: currentLang === 'hi' ? 'भाषाएँ' : 'Languages',
-    villageContext: currentLang === 'hi' ? 'गाँव संदर्भ' : 'Village Context',
-    keyFindings: currentLang === 'hi' ? 'मुख्य निष्कर्ष' : 'Key Findings',
-    imagesLabel: currentLang === 'hi' ? 'चित्र' : 'Images',
-  };
-
-  const sumData = [
-    [labels.villageDetails, ''],
-    [labels.villageName, d.village_name || ''],
-    [labels.districtState, d.district_state || ''],
-    [labels.population, d.population || ''],
-    [labels.languages, (d.languages_detected || []).join(', ')],
-    ['', ''],
-    [labels.villageContext, ''],
-    ...(d.context || '').split('\n\n').filter(Boolean).map(p => [p]),
-    ['', ''],
-    [labels.keyFindings, ''],
-    ...(d.key_findings || []).map(f => [f]),
-    ['', ''],
-    [labels.imagesLabel + ' (' + (imageDataUrls || []).length + ')', (imageDataUrls || []).map(i => i.name).join(', ') || 'None'],
-  ];
-  const wsSum = utils.aoa_to_sheet(sumData);
-  wsSum['!cols'] = [25, 100];
-  utils.book_append_sheet(wb, wsSum, 'Summary');
-
-  if (imageDataUrls && imageDataUrls.length > 0) {
-    const imgRows = [[currentLang === 'hi' ? 'चित्र फ़ाइलें' : 'Image Files']];
-    imageDataUrls.forEach(img => imgRows.push([img.name]));
-    const wsImg = utils.aoa_to_sheet(imgRows);
-    wsImg['!cols'] = [50];
-    utils.book_append_sheet(wb, wsImg, 'Images');
-  }
-
-  const name = (d.village_name || 'village_report').replace(/[\\/:*?"<>|]/g, '_');
-  const wbout = write(wb, { bookType: 'xlsx', type: 'base64' });
-  const link = document.createElement('a');
-  link.href = 'data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,' + wbout;
-  link.download = name + '_report.xlsx';
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
 }
