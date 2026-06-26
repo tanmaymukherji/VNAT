@@ -313,7 +313,7 @@ export default function App() {
                     : 'border-transparent text-gray-600 hover:text-gray-800 hover:bg-gray-100'
                 }`}
               >
-                Editor
+                Need Analyser
               </button>
             </div>
 
