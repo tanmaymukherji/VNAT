@@ -1,0 +1,14 @@
+.env
+node_modules
+dist
+__pycache__
+*.pyc
+*.pyo
+*.log
+.DS_Store
+.vscode
+.idea
+*.docx
+*.pdf
+*.db
+uploads/
