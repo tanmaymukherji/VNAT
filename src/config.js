@@ -1,4 +1,4 @@
-// Configuration for T³ - Tanmay's Translation Tool
+// Configuration for VNAT - Village Need Analysis Tool
 // All API keys and settings in one place.
 
 function getLS(key, fallback = '') {
@@ -6,18 +6,25 @@ function getLS(key, fallback = '') {
 }
 
 const CONFIG = {
-  // Hugging Face Inference API key (set via Settings panel, persisted in localStorage)
-  // Uses the @huggingface/inference client which routes through router.huggingface.co
   HUGGINGFACE_API_KEY: getLS('hf_api_key'),
 
-  // Bhashini API
-  BHASHINI_API_KEY: getLS('bhashini_api_key'),
-  BHASHINI_API_URL: 'https://api.bhashini.gov.in/v2',
+  GROQ_API_KEY: getLS('groq_api_key'),
+  GROQ_API_URL: 'https://api.groq.com/openai/v1/chat/completions',
+  GROQ_MODEL: 'llama-3.3-70b-versatile',
 
-  // Tesseract OCR languages
+  HF_SUMMARISE_API_KEY: getLS('hf_summarise_api_key') || getLS('hf_api_key'),
+
+  NVIDIA_API_KEY: getLS('nvidia_api_key'),
+  NVIDIA_API_URL: 'https://integrate.api.nvidia.com/v1/chat/completions',
+  NVIDIA_MODEL: 'meta/llama-3.1-8b-instruct',
+
+  HF_ROUTER_URL: 'https://router.huggingface.co/v1/chat/completions',
+  HF_MODEL: 'meta-llama/llama-3.1-8b-instruct',
+
+  USE_HF_FALLBACK: getLS('vna_use_hf_fallback') !== 'false',
+
   OCR_LANGUAGES: 'hin+eng+san',
 
-  // Supported translation languages
   LANGUAGES: [
     { code: 'bn', name: 'Bengali', native: 'বাংলা' },
     { code: 'hi', name: 'Hindi', native: 'हिन्दी' },
@@ -31,13 +38,12 @@ const CONFIG = {
     { code: 'ur', name: 'Urdu', native: 'اردو' },
   ],
 
-  // IndicTrans2 model mapping
   INDICTRANS2_MODELS: {
     'en-indic': 'ai4bharat/indictrans2-en-indic-1B',
     'indic-en': 'ai4bharat/indictrans2-indic-en-1B',
     'indic-indic': 'ai4bharat/indictrans2-indic-indic-1B',
   },
-  // OCR.space API key for re-scanning image regions
+
   OCR_SPACE_API_KEY: 'K82846767888957',
 };
 

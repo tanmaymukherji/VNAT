@@ -3,15 +3,28 @@ import CONFIG from '../config';
 import { listProjects, saveProject, getWorkingInfo, changeWorkingDirectory } from '../storage';
 
 export default function SettingsPanel({ onClose }) {
-  const [hfKey, setHfKey] = useState(
+  const [hfOcrKey, setHfOcrKey] = useState(
     localStorage.getItem('hf_api_key') || ''
   );
-  const [bhashiniKey, setBhashiniKey] = useState(
-    localStorage.getItem('bhashini_api_key') || ''
+  const [groqKey, setGroqKey] = useState(
+    localStorage.getItem('groq_api_key') || ''
   );
-  const [libreKey, setLibreKey] = useState(
-    localStorage.getItem('libretranslate_api_key') || ''
+  const [hfSumKey, setHfSumKey] = useState(() => {
+    // Migrate existing hf_api_key to hf_summarise_api_key if not yet set
+    if (!localStorage.getItem('hf_summarise_api_key') && localStorage.getItem('hf_api_key')) {
+      localStorage.setItem('hf_summarise_api_key', localStorage.getItem('hf_api_key'));
+    }
+    return localStorage.getItem('hf_summarise_api_key') || '';
+  });
+  const [nvidiaKey, setNvidiaKey] = useState(
+    localStorage.getItem('nvidia_api_key') || ''
   );
+  const [useHFallback, setUseHFallback] = useState(
+    localStorage.getItem('vna_use_hf_fallback') !== 'false'
+  );
+  const [groqStatus, setGroqStatus] = useState('');
+  const [nvidiaStatus, setNvidiaStatus] = useState('');
+  const [hfSumStatus, setHfSumStatus] = useState('');
   const [saved, setSaved] = useState(false);
   const [storageInfo, setStorageInfo] = useState(null);
   const [importStatus, setImportStatus] = useState('');
@@ -48,7 +61,7 @@ export default function SettingsPanel({ onClose }) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `translation-tool-backup-${new Date().toISOString().slice(0,10)}.json`;
+      a.download = `vnat-backup-${new Date().toISOString().slice(0,10)}.json`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
@@ -81,132 +94,233 @@ export default function SettingsPanel({ onClose }) {
   };
 
   const handleSave = () => {
-    localStorage.setItem('hf_api_key', hfKey);
-    localStorage.setItem('bhashini_api_key', bhashiniKey);
-    localStorage.setItem('libretranslate_api_key', libreKey);
-    CONFIG.HUGGINGFACE_API_KEY = hfKey;
-    CONFIG.BHASHINI_API_KEY = bhashiniKey;
+    localStorage.setItem('hf_api_key', hfOcrKey);
+    localStorage.setItem('groq_api_key', groqKey);
+    localStorage.setItem('hf_summarise_api_key', hfSumKey);
+    localStorage.setItem('nvidia_api_key', nvidiaKey);
+    localStorage.setItem('vna_use_hf_fallback', useHFallback);
+    CONFIG.HUGGINGFACE_API_KEY = hfOcrKey;
+    CONFIG.GROQ_API_KEY = groqKey;
+    CONFIG.HF_SUMMARISE_API_KEY = hfSumKey;
+    CONFIG.NVIDIA_API_KEY = nvidiaKey;
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
 
+  const handleTestGroq = async () => {
+    if (!groqKey) { setGroqStatus('No key'); return; }
+    setGroqStatus('Testing...');
+    try {
+      const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + groqKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: [{ role: 'user', content: 'Say OK in one word' }], max_tokens: 10 }),
+      });
+      setGroqStatus(resp.ok ? 'OK' : 'Error ' + resp.status);
+    } catch { setGroqStatus('Failed'); }
+  };
+
+  const handleTestHfSum = async () => {
+    const key = hfSumKey || hfOcrKey;
+    if (!key) { setHfSumStatus('No key'); return; }
+    setHfSumStatus('Testing...');
+    try {
+      const resp = await fetch('https://router.huggingface.co/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'meta-llama/llama-3.1-8b-instruct', messages: [{ role: 'user', content: 'Say OK in one word' }], max_tokens: 10 }),
+      });
+      setHfSumStatus(resp.ok ? 'OK' : 'Error ' + resp.status);
+    } catch { setHfSumStatus('Failed'); }
+  };
+
+  const handleTestNvidia = async () => {
+    if (!nvidiaKey) { setNvidiaStatus('No key'); return; }
+    setNvidiaStatus('Testing...');
+    try {
+      const resp = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + nvidiaKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'meta/llama-3.1-8b-instruct', messages: [{ role: 'user', content: 'Say OK in one word' }], max_tokens: 10 }),
+      });
+      setNvidiaStatus(resp.ok ? 'OK' : 'Error ' + resp.status);
+    } catch { setNvidiaStatus('Failed'); }
+  };
+
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+    <div className="fixed inset-0 bg-black bg-opacity-30 z-50 overflow-y-auto">
+      <div className="min-h-full flex items-center justify-center p-4">
+      <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md my-4">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold">Settings</h2>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-700">&times;</button>
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-6">
+
+          {/* ------------- OCR & TRANSLATION SECTION ------------- */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Hugging Face API Key
-            </label>
-            <input
-              type="password"
-              value={hfKey}
-              onChange={(e) => setHfKey(e.target.value)}
-              className="w-full border rounded px-3 py-2 text-sm"
-              placeholder="Enter your Hugging Face token (hf_...)"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Used for IndicTrans2 translation models. Saved in browser local storage.
-            </p>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Bhashini API Key
-            </label>
-            <input
-              type="password"
-              value={bhashiniKey}
-              onChange={(e) => setBhashiniKey(e.target.value)}
-              className="w-full border rounded px-3 py-2 text-sm"
-              placeholder="Enter Bhashini API key"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Optional. If set, will be used for translations (with HF fallback).
-            </p>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              LibreTranslate API Key
-            </label>
-            <input
-              type="password"
-              value={libreKey}
-              onChange={(e) => setLibreKey(e.target.value)}
-              className="w-full border rounded px-3 py-2 text-sm"
-              placeholder="Get a free key at portal.libretranslate.com"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Optional. Free tier available at portal.libretranslate.com.
-            </p>
-          </div>
-        </div>
-
-        <hr className="my-4" />
-        <div>
-          <h3 className="text-sm font-semibold text-gray-700 mb-2">Storage</h3>
-          <div className="bg-gray-50 rounded p-3 text-xs text-gray-600 space-y-2">
-            <p>
-              All project data is stored in your selected working directory on your file system.
-              Images are saved to disk and loaded on demand, keeping browser memory usage low.
-            </p>
-            {storageInfo && (
-              <div className="space-y-1">
-                <p><strong>Working directory:</strong> {storageInfo.name}</p>
-                <p><strong>Local projects:</strong> {storageInfo.count}</p>
-              </div>
-            )}
-            <div className="flex gap-2 pt-1">
-              <button
-                onClick={handleChangeDirectory}
-                disabled={changingDir}
-                className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-3 py-1 rounded text-xs disabled:opacity-50"
-              >
-                {changingDir ? 'Selecting...' : 'Change Working Directory'}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <hr className="my-4" />
-        <div>
-          <h3 className="text-sm font-semibold text-gray-700 mb-2">Backup & Restore</h3>
-          <div className="bg-gray-50 rounded p-3 text-xs text-gray-600 space-y-2">
-            <p>
-              Export or import project metadata as a JSON file.
-              Images and project files on disk are not included.
-            </p>
-            <div className="flex gap-2 pt-1">
-              <button
-                onClick={handleExport}
-                disabled={exporting}
-                className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-3 py-1 rounded text-xs disabled:opacity-50"
-              >
-                {exporting ? 'Exporting...' : 'Export All (JSON)'}
-              </button>
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-3 py-1 rounded text-xs"
-              >
-                Import Backup
-              </button>
+            <h3 className="text-sm font-bold text-indigo-800 border-b border-indigo-200 pb-1 mb-3">
+              🔍 OCR & Translation (preloaded in T³ module)
+            </h3>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                Hugging Face API Key <span className="text-gray-400">(for IndicTrans2)</span>
+              </label>
               <input
-                ref={fileInputRef}
-                type="file"
-                accept=".json"
-                onChange={handleImport}
-                className="hidden"
+                type="password"
+                value={hfOcrKey}
+                onChange={(e) => setHfOcrKey(e.target.value)}
+                className="w-full border rounded px-3 py-2 text-sm"
+                placeholder="hf_..."
               />
+              <p className="text-xs text-gray-500 mt-1">
+                Used by OCR/translation features. <a href="https://huggingface.co/settings/tokens" target="_blank" className="text-indigo-600">Get token</a>
+              </p>
             </div>
-            {importStatus && (
-              <p className="text-blue-700">{importStatus}</p>
-            )}
+          </div>
+
+          {/* ------------- SUMMARISATION SECTION ------------- */}
+          <div>
+            <h3 className="text-sm font-bold text-emerald-800 border-b border-emerald-200 pb-1 mb-3">
+              📊 Summarisation (Village Report Analysis)
+            </h3>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  Groq API Key <span className="text-gray-400">(primary)</span>
+                </label>
+                <input
+                  type="password"
+                  value={groqKey}
+                  onChange={(e) => setGroqKey(e.target.value)}
+                  className="w-full border rounded px-3 py-2 text-sm"
+                  placeholder="gsk_..."
+                />
+                <div className="flex items-center gap-2 mt-1">
+                  <button onClick={handleTestGroq} className="text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300">Test</button>
+                  {groqStatus && <span className={`text-xs ${groqStatus === 'OK' ? 'text-green-600' : 'text-red-600'}`}>{groqStatus}</span>}
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Primary summarisation AI. <a href="https://console.groq.com/" target="_blank" className="text-indigo-600">Get free key</a>
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  Hugging Face API Key <span className="text-gray-400">(fallback, separate from OCR)</span>
+                </label>
+                <input
+                  type="password"
+                  value={hfSumKey}
+                  onChange={(e) => setHfSumKey(e.target.value)}
+                  className="w-full border rounded px-3 py-2 text-sm"
+                  placeholder="hf_... (or leave empty to reuse OCR key)"
+                />
+                <div className="flex items-center gap-2 mt-1">
+                  <button onClick={handleTestHfSum} className="text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300">Test</button>
+                  {hfSumStatus && <span className={`text-xs ${hfSumStatus === 'OK' ? 'text-green-600' : 'text-red-600'}`}>{hfSumStatus}</span>}
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Fallback for summarisation when Groq fails. Uses OCR key if left empty.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  NVIDIA API Key <span className="text-gray-400">(optional 3rd fallback)</span>
+                </label>
+                <input
+                  type="password"
+                  value={nvidiaKey}
+                  onChange={(e) => setNvidiaKey(e.target.value)}
+                  className="w-full border rounded px-3 py-2 text-sm"
+                  placeholder="nvapi-..."
+                />
+                <div className="flex items-center gap-2 mt-1">
+                  <button onClick={handleTestNvidia} className="text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300">Test</button>
+                  {nvidiaStatus && <span className={`text-xs ${nvidiaStatus === 'OK' ? 'text-green-600' : 'text-red-600'}`}>{nvidiaStatus}</span>}
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Third fallback. <a href="https://build.nvidia.com/" target="_blank" className="text-indigo-600">Get free key</a>
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="useHFallback"
+                  checked={useHFallback}
+                  onChange={(e) => setUseHFallback(e.target.checked)}
+                  className="rounded"
+                />
+                <label htmlFor="useHFallback" className="text-xs text-gray-700">Use HuggingFace fallback when Groq fails</label>
+              </div>
+            </div>
+          </div>
+
+          <hr className="my-2" />
+
+          <div>
+            <h3 className="text-sm font-semibold text-gray-700 mb-2">Storage</h3>
+            <div className="bg-gray-50 rounded p-3 text-xs text-gray-600 space-y-2">
+              <p>
+                All project data is stored in your selected working directory on your file system.
+                Images are saved to disk and loaded on demand, keeping browser memory usage low.
+              </p>
+              {storageInfo && (
+                <div className="space-y-1">
+                  <p><strong>Working directory:</strong> {storageInfo.name}</p>
+                  <p><strong>Local projects:</strong> {storageInfo.count}</p>
+                </div>
+              )}
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={handleChangeDirectory}
+                  disabled={changingDir}
+                  className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-3 py-1 rounded text-xs disabled:opacity-50"
+                >
+                  {changingDir ? 'Selecting...' : 'Change Working Directory'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <hr className="my-2" />
+          <div>
+            <h3 className="text-sm font-semibold text-gray-700 mb-2">Backup & Restore</h3>
+            <div className="bg-gray-50 rounded p-3 text-xs text-gray-600 space-y-2">
+              <p>
+                Export or import project metadata as a JSON file.
+                Images and project files on disk are not included.
+              </p>
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={handleExport}
+                  disabled={exporting}
+                  className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-3 py-1 rounded text-xs disabled:opacity-50"
+                >
+                  {exporting ? 'Exporting...' : 'Export All (JSON)'}
+                </button>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-3 py-1 rounded text-xs"
+                >
+                  Import Backup
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".json"
+                  onChange={handleImport}
+                  className="hidden"
+                />
+              </div>
+              {importStatus && (
+                <p className="text-blue-700">{importStatus}</p>
+              )}
+            </div>
           </div>
         </div>
 
@@ -226,5 +340,6 @@ export default function SettingsPanel({ onClose }) {
         </div>
       </div>
     </div>
+  </div>
   );
 }

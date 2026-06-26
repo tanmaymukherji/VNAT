@@ -16,7 +16,7 @@ https://tanmaymukherji.github.io/T3/
 - **OCR routing**: OCR.space Engine 3 is used by default for scanned pages, handwriting, boards and detected tables; Tesseract.js remains the offline fallback
 - **Photo filtering**: Images without meaningful written content are ignored automatically
 - **Editor**: Split-pane editor to review extracted text and create translations
-- **Translation**: Uses Hugging Face IndicTrans2 (primary) or Bhashini (secondary) APIs
+- **Translation**: Uses Hugging Face IndicTrans2 (primary) with MyMemory and Google Translate fallbacks
 - **Selective Translation**: Translate specific paragraphs, keep others original
 - **Export**: Download translated documents as DOCX files
 
@@ -25,7 +25,7 @@ https://tanmaymukherji.github.io/T3/
 - Tesseract.js (browser OCR via WebAssembly)
 - docx (client-side DOCX generation)
 - idb (IndexedDB wrapper for document storage)
-- Hugging Face Inference API / Bhashini API
+- Hugging Face Inference API
 
 ## Setup (for development)
 ```bash

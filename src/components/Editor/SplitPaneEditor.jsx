@@ -608,7 +608,6 @@ export default function SplitPaneEditor({ project, images, paragraphs: origParag
                 className="text-xs border rounded px-2 py-1"
               >
                 <option value="huggingface">Hugging Face (IndicTrans2)</option>
-                <option value="bhashini">Bhashini</option>
               </select>
               <button
                 onClick={handleExportDocx}

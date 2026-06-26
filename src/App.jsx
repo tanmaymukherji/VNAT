@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, Component } from 'react';
 import DocumentLibrary from './components/Library/DocumentLibrary';
-import SplitPaneEditor from './components/Editor/SplitPaneEditor';
+import UnifiedEditor from './components/Editor/UnifiedEditor';
 import OcrValidator from './components/Editor/OcrValidator';
 import FolderImporter from './components/Importer/FolderImporter';
 import DocxImporter from './components/Importer/DocxImporter';
@@ -9,10 +9,9 @@ import ErrorBanner from './components/ErrorBanner';
 import { initializeStorage, retryInitialization, listProjects, saveProject, deleteProject, buildHtmlContent } from './storage';
 
 function preferredEditorTab(project) {
-  if (project?.documentKind === 'docx' || project?.needsValidation === false) return 'translate';
+  if (project?.documentKind === 'docx' || project?.needsValidation === false) return 'editor';
   if (['pdf', 'mixed', 'images'].includes(project?.documentKind)) return 'ocr';
-  // Preserve routing for projects created before documentKind existed.
-  return project?.isDocx ? 'translate' : project?.images?.length ? 'ocr' : 'translate';
+  return project?.isDocx ? 'editor' : project?.images?.length ? 'ocr' : 'editor';
 }
 
 class ErrorBoundary extends Component {
@@ -61,6 +60,12 @@ export default function App() {
   const [view, setView] = useState('library');
   const [editorTab, setEditorTab] = useState('ocr');
   const [showSettings, setShowSettings] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState(null);
+
+  // Default HuggingFace fallback to enabled
+  if (!localStorage.getItem('vna_use_hf_fallback')) {
+    localStorage.setItem('vna_use_hf_fallback', 'true');
+  }
 
   const doInitialize = useCallback(async (allowPicker = false) => {
     try {
@@ -94,6 +99,7 @@ export default function App() {
   const handleProjectResult = useCallback(async (result) => {
     setLoading(true);
     setError(null);
+    setAnalysisResult(null);
     try {
       let project;
 
@@ -123,6 +129,7 @@ export default function App() {
       await loadProjects();
       setActiveProject(project);
       setEditorTab(preferredEditorTab(project));
+      setAnalysisResult(project.analysisResult || null);
       setView('editor');
     } catch (err) {
       setError(err.message || 'Failed to create project');
@@ -134,6 +141,7 @@ export default function App() {
   const handleSelectProject = (project) => {
     setActiveProject(project);
     setEditorTab(preferredEditorTab(project));
+    setAnalysisResult(project.analysisResult || null);
     setView('editor');
   };
 
@@ -145,6 +153,7 @@ export default function App() {
       if (activeProject?.id === project.id) {
         setActiveProject(null);
         setEditorTab('ocr');
+        setAnalysisResult(null);
         setView('library');
       }
       await loadProjects();
@@ -155,29 +164,15 @@ export default function App() {
 
   const handleSaveOcr = async (updatedParagraphs) => {
     if (!activeProject) { return false; }
-    console.log('[handleSaveOcr] START', {
-      projectId: activeProject.id,
-      beforeParagraphsCount: activeProject.paragraphsArray?.length,
-      beforeContentLength: activeProject.content?.length,
-      incomingCount: updatedParagraphs?.length,
-      incomingSample: updatedParagraphs?.slice(0, 2).map(p => ({ i: p.index, t: p.text })),
-    });
     setLoading(true);
     try {
       const htmlContent = buildHtmlContent(updatedParagraphs);
-      console.log('[handleSaveOcr] generated HTML length:', htmlContent.length, 'first 100:', htmlContent.substring(0, 100));
       const updated = await saveProject({
         ...activeProject,
         content: htmlContent,
         paragraphsArray: updatedParagraphs,
       });
-      console.log('[handleSaveOcr] saveProject returned', {
-        id: updated.id,
-        paragraphsCount: updated.paragraphsArray?.length,
-        paragraphsSample: updated.paragraphsArray?.slice(0, 2).map(p => ({ i: p.index, t: p.text })),
-      });
       setActiveProject(updated);
-      console.log('[handleSaveOcr] DONE - activeProject updated');
       return true;
     } catch (err) {
       console.error('[handleSaveOcr] ERROR:', err);
@@ -201,6 +196,21 @@ export default function App() {
       setLoading(false);
     }
   };
+
+  const handleAnalysisResult = useCallback(async (result) => {
+    if (!activeProject || !result) return;
+    try {
+      const updated = await saveProject({ ...activeProject, analysisResult: result });
+      setActiveProject(updated);
+      setAnalysisResult(result);
+    } catch (err) {
+      console.error('Failed to save analysis result:', err);
+    }
+  }, [activeProject]);
+
+  const handleEditorLog = useCallback((msg, type) => {
+    console.log(`[VNAT] [${type}] ${msg}`);
+  }, []);
 
   if (appError) {
     return (
@@ -243,7 +253,7 @@ export default function App() {
     <div className="h-screen flex flex-col">
       <header className="bg-slate-800 text-white px-6 py-3 flex items-center justify-between shadow-md">
         <div className="flex items-center gap-4">
-          <h1 className="text-xl font-bold">T³ - Tanmay's Translation Tool <span className="text-xs font-normal text-slate-400">v0.2.0</span></h1>
+          <h1 className="text-xl font-bold">VNAT - Village Need Analysis Tool <span className="text-xs font-normal text-slate-400">v1.0.0</span></h1>
           <nav className="flex gap-2">
             <button
               onClick={() => setView('library')}
@@ -296,14 +306,14 @@ export default function App() {
                 OCR Validation
               </button>
               <button
-                onClick={() => setEditorTab('translate')}
+                onClick={() => setEditorTab('editor')}
                 className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                  editorTab === 'translate'
+                  editorTab === 'editor'
                     ? 'border-indigo-600 text-indigo-700 bg-white'
                     : 'border-transparent text-gray-600 hover:text-gray-800 hover:bg-gray-100'
                 }`}
               >
-                Translation
+                Editor
               </button>
             </div>
 
@@ -316,12 +326,15 @@ export default function App() {
                 onSaveParagraphs={handleSaveOcr}
               />
             ) : (
-              <SplitPaneEditor
+              <UnifiedEditor
                 project={activeProject}
                 images={activeProject.images || []}
                 paragraphs={activeProject.paragraphsArray || []}
                 onSave={handleSaveContent}
                 loading={loading}
+                analysisResult={analysisResult}
+                onAnalysisResult={handleAnalysisResult}
+                onLog={handleEditorLog}
               />
             )}
           </div>

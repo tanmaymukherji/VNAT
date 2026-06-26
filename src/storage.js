@@ -205,6 +205,15 @@ function _safeSourceFilename(sourceIdOrFilename) {
   return `${base}.pdf`;
 }
 
+export async function writeDocxToFolder(projectId, blob, filename = 'village_report.docx') {
+  const projectDir = await _getProjectDir(projectId);
+  const fileHandle = await projectDir.getFileHandle(filename, { create: true });
+  const writable = await fileHandle.createWritable();
+  await writable.write(blob);
+  await writable.close();
+  return filename;
+}
+
 export async function writeSourceDocument(projectId, sourceId, blob) {
   const projectDir = await _getProjectDir(projectId);
   const sourcesDir = await projectDir.getDirectoryHandle('sources', { create: true });

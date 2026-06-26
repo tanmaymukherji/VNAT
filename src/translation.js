@@ -8,11 +8,6 @@ const LANG_MAP = {
   gu: 'gu', kn: 'kn', ml: 'ml', pa: 'pa', ur: 'ur',
 };
 
-const LIBRE_LANG_MAP = {
-  bn: 'bn', hi: 'hi', ta: 'ta', te: 'te', mr: 'mr',
-  gu: 'gu', kn: 'kn', ml: 'ml', pa: 'pa', ur: 'ur',
-};
-
 const IT2_LANG_MAP = {
   bn: 'ben_Beng', hi: 'hin_Deva', ta: 'tam_Taml', te: 'tel_Telu',
   mr: 'mar_Deva', gu: 'guj_Gujr', kn: 'kan_Knda', ml: 'mal_Mlym',
@@ -100,33 +95,6 @@ async function translateMyMemory(text, tgtLang) {
   return translated.join(' ');
 }
 
-async function translateLibre(text, tgtLang) {
-  const src = detectLanguage(text);
-  const apiKey = localStorage.getItem('libretranslate_api_key') || '';
-
-  const body = {
-    q: text,
-    source: src,
-    target: tgtLang,
-    format: 'text',
-  };
-  if (apiKey) body.api_key = apiKey;
-
-  const response = await fetch('https://libretranslate.com/translate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    const bodyText = await response.text().catch(() => '');
-    throw new Error(`LibreTranslate error (${response.status}): ${bodyText}`);
-  }
-
-  const result = await response.json();
-  return result.translatedText || '';
-}
-
 async function hfFetch(modelId, body, apiKey) {
   const key = apiKey || localStorage.getItem('hf_api_key') || '';
   const url = `https://api-inference.huggingface.co/models/${modelId}`;
@@ -187,17 +155,7 @@ export async function translateHF(text, srcLang, tgtLang, apiKey) {
     }
   }
 
-  // 2. LibreTranslate (free tier without key)
-  if (tgt && LIBRE_LANG_MAP[tgtLang]) {
-    try {
-      const translation = await translateLibre(text, LIBRE_LANG_MAP[tgtLang]);
-      if (translation) return { translation };
-    } catch (e) {
-      errors.push(`LibreTranslate: ${e.message}`);
-    }
-  }
-
-  // 3. Google Translate (free, no key, unofficial API)
+  // 2. Google Translate (free, no key, unofficial API)
   try {
     const translation = await translateGoogle(text, tgtLang);
     if (translation) return { translation };
@@ -205,7 +163,7 @@ export async function translateHF(text, srcLang, tgtLang, apiKey) {
     errors.push(`Google: ${e.message}`);
   }
 
-  // 4. OPUS-MT via HF Inference API (requires optional HF key)
+  // 3. OPUS-MT via HF Inference API (requires optional HF key)
   if (srcLang === 'auto' || srcLang === 'en') {
     try {
       const translation = await translateOpusMT(text, tgtLang, apiKey);
@@ -215,7 +173,7 @@ export async function translateHF(text, srcLang, tgtLang, apiKey) {
     }
   }
 
-  // 5. IndicTrans2 via HF Inference API (requires optional HF key)
+  // 4. IndicTrans2 via HF Inference API (requires optional HF key)
   try {
     const translation = await translateIndicTrans2(text, srcLang, tgtLang, apiKey);
     return { translation };
@@ -226,32 +184,6 @@ export async function translateHF(text, srcLang, tgtLang, apiKey) {
   throw new Error(`All translation methods failed: ${errors.join('; ')}`);
 }
 
-export async function translateBhashini(text, srcLang, tgtLang, apiKey) {
-  if (isSanskrit(text)) return { translation: text, note: 'Sanskrit text kept as-is' };
-  if (!apiKey) throw new Error('Bhashini API key not configured');
-
-  const src = srcLang === 'auto' ? detectLanguage(text) : srcLang;
-  const response = await fetch(`${CONFIG.BHASHINI_API_URL}/translate`, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sourceLanguage: src, targetLanguage: tgtLang, text }),
-  });
-  if (!response.ok) throw new Error(`Bhashini API error (${response.status})`);
-  const result = await response.json();
-  return { translation: result.translation || result.text || '' };
-}
-
 export async function translate(provider, text, srcLang, tgtLang, apiKey) {
-  if (provider === 'bhashini') {
-    try {
-      return await translateBhashini(text, srcLang, tgtLang, apiKey);
-    } catch (e) {
-      if (e.message.includes('key not configured')) {
-        console.warn('Bhashini unavailable, falling back to HF:', e.message);
-        return await translateHF(text, srcLang, tgtLang, apiKey);
-      }
-      throw e;
-    }
-  }
   return await translateHF(text, srcLang, tgtLang, apiKey);
 }
