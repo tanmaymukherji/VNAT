@@ -328,7 +328,7 @@ export default function UnifiedEditor({ project, images, paragraphs: origParagra
         </div>
       </div>
 
-      <div className="w-1/2 flex flex-col">
+      <div className="w-1/2 flex flex-col h-full">
         <SummarizePane
           project={{
             ...project,
