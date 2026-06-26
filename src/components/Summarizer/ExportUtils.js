@@ -1,5 +1,5 @@
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, HeadingLevel, AlignmentType, WidthType, ImageRun } from 'docx';
-import * as XLSX from 'xlsx';
+import { utils, write } from 'xlsx';
 import { saveAs } from 'file-saver';
 
 const BRAND_BLUE = '1e3a5f';
@@ -164,7 +164,7 @@ export function downloadReportXlsx(analysisResult, imageDataUrls, currentLang = 
   const d = analysisResult;
   if (!d) throw new Error('No analysis result');
 
-  const wb = XLSX.utils.book_new();
+  const wb = utils.book_new();
 
   const needsData = [NEEDS_COLUMNS];
   for (const n of d.needs || []) {
@@ -174,9 +174,9 @@ export function downloadReportXlsx(analysisResult, imageDataUrls, currentLang = 
       n.responsible_party || '', n.budget_estimate || '', n.status || '', n.remarks || '',
     ]);
   }
-  const wsNeeds = XLSX.utils.aoa_to_sheet(needsData);
+  const wsNeeds = utils.aoa_to_sheet(needsData);
   wsNeeds['!cols'] = [50, 22, 10, 30, 35, 15, 22, 15, 12, 35];
-  XLSX.utils.book_append_sheet(wb, wsNeeds, 'Needs');
+  utils.book_append_sheet(wb, wsNeeds, 'Needs');
 
   const labels = {
     villageDetails: currentLang === 'hi' ? 'गाँव विवरण' : 'Village Details',
@@ -204,20 +204,24 @@ export function downloadReportXlsx(analysisResult, imageDataUrls, currentLang = 
     ['', ''],
     [labels.imagesLabel + ' (' + (imageDataUrls || []).length + ')', (imageDataUrls || []).map(i => i.name).join(', ') || 'None'],
   ];
-  const wsSum = XLSX.utils.aoa_to_sheet(sumData);
+  const wsSum = utils.aoa_to_sheet(sumData);
   wsSum['!cols'] = [25, 100];
-  XLSX.utils.book_append_sheet(wb, wsSum, 'Summary');
+  utils.book_append_sheet(wb, wsSum, 'Summary');
 
   if (imageDataUrls && imageDataUrls.length > 0) {
     const imgRows = [[currentLang === 'hi' ? 'चित्र फ़ाइलें' : 'Image Files']];
     imageDataUrls.forEach(img => imgRows.push([img.name]));
-    const wsImg = XLSX.utils.aoa_to_sheet(imgRows);
+    const wsImg = utils.aoa_to_sheet(imgRows);
     wsImg['!cols'] = [50];
-    XLSX.utils.book_append_sheet(wb, wsImg, 'Images');
+    utils.book_append_sheet(wb, wsImg, 'Images');
   }
 
   const name = (d.village_name || 'village_report').replace(/[\\/:*?"<>|]/g, '_');
-  const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-  const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  saveAs(blob, name + '_report.xlsx');
+  const wbout = write(wb, { bookType: 'xlsx', type: 'base64' });
+  const link = document.createElement('a');
+  link.href = 'data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,' + wbout;
+  link.download = name + '_report.xlsx';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
 }
