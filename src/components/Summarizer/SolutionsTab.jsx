@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const ASKGRE_URL = 'https://askgre.grameee.org/api/chat';
@@ -61,7 +61,20 @@ function priorityClass(priority) {
   return '';
 }
 
+function serializeNeeds(needsArr) {
+  return needsArr.map(n => ({
+    need: n.need,
+    category: n.category,
+    priority: n.priority,
+    _keywords: n._keywords,
+    _solutions: n._solutions,
+  }));
+}
+
 export default function SolutionsTab({ result, onResultUpdate, onLog }) {
+  const resultRef = useRef(result);
+  useEffect(() => { resultRef.current = result; }, [result]);
+
   const [needs, setNeeds] = useState(() => {
     if (!result?.needs) return [];
     return result.needs.map((n, i) => ({
@@ -80,103 +93,98 @@ export default function SolutionsTab({ result, onResultUpdate, onLog }) {
   const [bulkChecking, setBulkChecking] = useState(false);
   const [progress, setProgress] = useState(0);
 
-  const updateNeed = useCallback((idx, patch) => {
-    setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, ...patch } : n));
-  }, []);
-
-  const saveToResult = useCallback((updatedNeeds) => {
+  const saveToResult = useCallback(() => {
     if (!onResultUpdate) return;
-    onResultUpdate({ ...result, needs: updatedNeeds.map(n => ({
-      need: n.need,
-      category: n.category,
-      priority: n.priority,
-      _keywords: n._keywords,
-      _solutions: n._solutions,
-    }))});
-  }, [result, onResultUpdate]);
+    setNeeds(prev => {
+      onResultUpdate({ ...resultRef.current, needs: serializeNeeds(prev) });
+      return prev;
+    });
+  }, [onResultUpdate]);
 
   const handleGenerateKeywords = useCallback(async (idx) => {
-    const need = needs[idx];
-    if (!need) return;
-    updateNeed(idx, { _generatingKeywords: true, _apiError: null });
+    setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, _generatingKeywords: true, _apiError: null } : n));
+    const snapshot = needs;
+    const needText = snapshot[idx]?.need;
+    if (!needText) return;
     try {
-      const keywords = await extractKeywords(need.need);
-      updateNeed(idx, { _keywords: keywords, _generatingKeywords: false });
+      const keywords = await extractKeywords(needText);
+      setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, _keywords: keywords, _generatingKeywords: false } : n));
       onLog?.(`Keywords generated for need #${idx + 1}`, 'success');
     } catch (e) {
-      updateNeed(idx, { _generatingKeywords: false, _apiError: e.message });
+      setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, _generatingKeywords: false, _apiError: e.message } : n));
       onLog?.(e.message, 'error');
     }
-  }, [needs, updateNeed, onLog]);
+  }, [needs, onLog]);
 
   const handleGenerateAll = useCallback(async () => {
     setBulkGenerating(true);
     setProgress(0);
+    const snapshot = needs;
+    const todo = snapshot.filter(n => !n._keywords);
+    if (todo.length === 0) { setBulkGenerating(false); return; }
     let completed = 0;
-    const total = needs.filter(n => !n._keywords).length;
-    if (total === 0) { setBulkGenerating(false); return; }
-    for (const need of needs) {
-      if (need._keywords) { completed++; setProgress(completed); continue; }
+    for (const need of todo) {
       try {
         const keywords = await extractKeywords(need.need);
-        updateNeed(need._id, { _keywords: keywords, _generatingKeywords: false });
+        setNeeds(prev => prev.map((n, i) => i === need._id ? { ...n, _keywords: keywords, _generatingKeywords: false } : n));
         completed++;
         setProgress(completed);
         onLog?.(`Keywords generated for need #${need._id + 1}`, 'success');
       } catch (e) {
-        updateNeed(need._id, { _generatingKeywords: false, _apiError: e.message });
+        setNeeds(prev => prev.map((n, i) => i === need._id ? { ...n, _generatingKeywords: false, _apiError: e.message } : n));
         completed++;
         setProgress(completed);
         onLog?.(e.message, 'error');
       }
     }
     setBulkGenerating(false);
-  }, [needs, updateNeed, onLog]);
+    saveToResult();
+  }, [needs, onLog, saveToResult]);
 
   const handleCheckSolutions = useCallback(async (idx) => {
-    const need = needs[idx];
+    setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, _checkingSolutions: true, _apiError: null } : n));
+    const snapshot = needs;
+    const need = snapshot[idx];
     if (!need?._keywords) return;
-    updateNeed(idx, { _checkingSolutions: true, _apiError: null });
     try {
       const solutions = await searchAskGRE(need._keywords);
-      const updatedNeeds = needs.map((n, i) => i === idx ? { ...n, _solutions: solutions, _checkingSolutions: false, _solutionsExpanded: false } : n);
-      setNeeds(updatedNeeds);
+      setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, _solutions: solutions, _checkingSolutions: false, _solutionsExpanded: false } : n));
       onLog?.(`Found ${solutions.length} solutions for need #${idx + 1}`, 'success');
-      saveToResult(updatedNeeds);
+      saveToResult();
     } catch (e) {
-      updateNeed(idx, { _checkingSolutions: false, _apiError: e.message });
+      setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, _checkingSolutions: false, _apiError: e.message } : n));
       onLog?.(e.message, 'error');
     }
-  }, [needs, updateNeed, onLog, saveToResult]);
+  }, [needs, onLog, saveToResult]);
 
   const handleCheckAll = useCallback(async () => {
     setBulkChecking(true);
     setProgress(0);
-    const withKeywords = needs.filter(n => n._keywords);
-    if (withKeywords.length === 0) { setBulkChecking(false); return; }
+    const snapshot = needs;
+    const todo = snapshot.filter(n => n._keywords);
+    if (todo.length === 0) { setBulkChecking(false); return; }
     let completed = 0;
-    for (const need of withKeywords) {
+    for (const need of todo) {
       try {
         const solutions = await searchAskGRE(need._keywords);
-        const updatedNeeds = needs.map((n, i) => i === need._id ? { ...n, _solutions: solutions, _checkingSolutions: false } : n);
-        setNeeds(updatedNeeds);
+        setNeeds(prev => prev.map((n, i) => i === need._id ? { ...n, _solutions: solutions, _checkingSolutions: false } : n));
         completed++;
         setProgress(completed);
         onLog?.(`Found ${solutions.length} solutions for need #${need._id + 1}`, 'success');
-        saveToResult(updatedNeeds);
       } catch (e) {
-        updateNeed(need._id, { _checkingSolutions: false, _apiError: e.message });
+        setNeeds(prev => prev.map((n, i) => i === need._id ? { ...n, _checkingSolutions: false, _apiError: e.message } : n));
         completed++;
         setProgress(completed);
         onLog?.(e.message, 'error');
       }
     }
     setBulkChecking(false);
-  }, [needs, updateNeed, onLog, saveToResult]);
+    saveToResult();
+  }, [needs, onLog, saveToResult]);
 
   const handleKeywordsChange = useCallback((idx, value) => {
-    updateNeed(idx, { _keywords: value });
-  }, [updateNeed]);
+    setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, _keywords: value } : n));
+  }, []);
 
   const toggleSolutions = useCallback((idx) => {
     setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, _solutionsExpanded: !n._solutionsExpanded } : n));
