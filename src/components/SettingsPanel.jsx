@@ -22,6 +22,9 @@ export default function SettingsPanel({ onClose }) {
   const [useHFallback, setUseHFallback] = useState(
     localStorage.getItem('vna_use_hf_fallback') !== 'false'
   );
+  const [greKey, setGreKey] = useState(
+    localStorage.getItem('gre_api_key') || ''
+  );
   const [groqStatus, setGroqStatus] = useState('');
   const [nvidiaStatus, setNvidiaStatus] = useState('');
   const [hfSumStatus, setHfSumStatus] = useState('');
@@ -98,6 +101,7 @@ export default function SettingsPanel({ onClose }) {
     localStorage.setItem('groq_api_key', groqKey);
     localStorage.setItem('hf_summarise_api_key', hfSumKey);
     localStorage.setItem('nvidia_api_key', nvidiaKey);
+    localStorage.setItem('gre_api_key', greKey);
     localStorage.setItem('vna_use_hf_fallback', useHFallback);
     CONFIG.HUGGINGFACE_API_KEY = hfOcrKey;
     CONFIG.GROQ_API_KEY = groqKey;
@@ -257,6 +261,29 @@ export default function SettingsPanel({ onClose }) {
                 />
                 <label htmlFor="useHFallback" className="text-xs text-gray-700">Use HuggingFace fallback when Groq fails</label>
               </div>
+            </div>
+          </div>
+
+          {/* ------------- ASKGRE SECTION ------------- */}
+          <div>
+            <h3 className="text-sm font-bold text-blue-800 border-b border-blue-200 pb-1 mb-3">
+              🌐 AskGRE API (Solution Matching)
+            </h3>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                AskGRE API Key
+              </label>
+                <input
+                  type="password"
+                  value={greKey}
+                  onChange={(e) => setGreKey(e.target.value)}
+                  className="w-full border rounded px-3 py-2 text-sm"
+                  placeholder="gre_..."
+                />
+              <p className="text-xs text-gray-500 mt-1">
+                Used by the Solutions tab to match village needs with GRE solutions.
+                Get your key from askgre.grameee.org/admin
+              </p>
             </div>
           </div>
 

@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import SummaryTab from '../Summarizer/SummaryTab';
 import NeedsTab from '../Summarizer/NeedsTab';
 import ImagesTab from '../Summarizer/ImagesTab';
+import SolutionsTab from '../Summarizer/SolutionsTab';
 import ExportBar from '../Summarizer/ExportBar';
 import { summarizeReport } from '../Summarizer/ApiClient';
 import { downloadReportDocx, downloadReportXlsx } from '../Summarizer/ExportUtils';
@@ -26,6 +27,7 @@ export default function SummarizePane({ project, analysisResult, onAnalysisResul
         Summary_Data: 'Summary Data',
         Needs: 'Needs',
         Images: 'Images',
+        Solutions: 'Solutions',
         Error: 'Error',
         all_APIs_failed: 'All AI APIs failed. Check your API keys in Settings.',
       },
@@ -36,6 +38,7 @@ export default function SummarizePane({ project, analysisResult, onAnalysisResul
         Summary_Data: 'सारांश डेटा',
         Needs: 'ज़रूरतें',
         Images: 'चित्र',
+        Solutions: 'समाधान',
         Error: 'त्रुटि',
         all_APIs_failed: 'सभी AI API विफल। Settings में अपनी API keys जाँचें।',
       },
@@ -154,6 +157,7 @@ export default function SummarizePane({ project, analysisResult, onAnalysisResul
     summary: t('Summary_Data'),
     needs: t('Needs'),
     images: t('Images'),
+    solutions: t('Solutions'),
   };
 
   if (loading) {
@@ -204,7 +208,7 @@ export default function SummarizePane({ project, analysisResult, onAnalysisResul
       />
 
       <div className="flex border-b bg-slate-100">
-        {['summary', 'needs', 'images'].map(tab => (
+        {['summary', 'needs', 'images', 'solutions'].map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -223,6 +227,7 @@ export default function SummarizePane({ project, analysisResult, onAnalysisResul
         {activeTab === 'summary' && <SummaryTab data={result} currentLang={currentLang} />}
         {activeTab === 'needs' && <NeedsTab needs={result.needs} currentLang={currentLang} />}
         {activeTab === 'images' && <ImagesTab images={images} currentLang={currentLang} />}
+        {activeTab === 'solutions' && <SolutionsTab result={result} onLog={log} />}
       </div>
     </div>
   );
