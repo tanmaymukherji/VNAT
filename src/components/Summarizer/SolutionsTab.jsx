@@ -204,10 +204,8 @@ export default function SolutionsTab({ result, onResultUpdate, onLog }) {
 
   const handleClearSolutions = useCallback(() => {
     setNeeds(prev => prev.map(n => ({ ...n, _solutions: null, _solutionsExpanded: false })));
-    if (onResultUpdate) {
-      onResultUpdate({ ...resultRef.current, needs: [] });
-    }
-  }, [onResultUpdate]);
+    saveToResult();
+  }, [saveToResult]);
 
   const handleExportXlsx = useCallback(() => {
     const snapshot = needs;
