@@ -196,12 +196,22 @@ export default function SummarizePane({ project, analysisResult, onAnalysisResul
 
   return (
     <div className="flex flex-col h-full">
-      <ExportBar
-        onExportDocx={handleExportDocx}
-        onExportExcel={handleExportExcel}
-        currentLang={currentLang}
-        onLangChange={handleLangChange}
-      />
+      <div className="flex items-center gap-2 px-4 py-1 bg-slate-100 border-b">
+        <ExportBar
+          onExportDocx={handleExportDocx}
+          onExportExcel={handleExportExcel}
+          currentLang={currentLang}
+          onLangChange={handleLangChange}
+        />
+        <span className="text-slate-300 text-xs">|</span>
+        <button
+          onClick={() => { setSummarized(false); setResult(null); setActiveTab('summary'); }}
+          className="text-xs text-slate-500 hover:text-slate-700 underline"
+          title="Re-run the analysis from scratch"
+        >
+          ⟳ Re-run Analysis
+        </button>
+      </div>
 
       <div className="flex border-b bg-slate-100">
         {['summary', 'needs', 'images'].map(tab => (
