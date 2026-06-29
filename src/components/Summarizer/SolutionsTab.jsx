@@ -4,7 +4,7 @@ const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const ASKGRE_URL = 'https://askgre.grameee.org/api/chat';
 const KEYWORD_MODEL = 'llama-3.3-70b-versatile';
 
-async function extractKeywords(needText, onLog) {
+async function extractKeywords(needText) {
   const key = localStorage.getItem('groq_api_key');
   if (!key) throw new Error('No Groq API key. Add it in Settings.');
 
@@ -17,7 +17,6 @@ Need statement: "${needText}"
 
 Keywords:`;
 
-  onLog?.('Extracting keywords via Groq...', 'info');
   const res = await fetch(GROQ_URL, {
     method: 'POST',
     headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
@@ -35,196 +34,284 @@ Keywords:`;
   }
 
   const data = await res.json();
-  const content = (data.choices?.[0]?.message?.content || '').trim();
-  const keywords = content.split(',').map(k => k.trim()).filter(Boolean);
-  return keywords.length > 0 ? keywords : [needText.slice(0, 80)];
+  return (data.choices?.[0]?.message?.content || '').trim();
 }
 
-async function searchAskGRE(keywords, onLog) {
+async function searchAskGRE(keywordsCsv) {
   const key = localStorage.getItem('gre_api_key');
   if (!key) throw new Error('No AskGRE API key. Add it in Settings.');
 
-  onLog?.(`Searching GRE for: ${keywords.join(', ')}`, 'info');
-  const res = await fetch(`${ASKGRE_URL}?api_key=${encodeURIComponent(key)}`, {
+  const res = await fetch(ASKGRE_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message: keywords.join(', ') }),
+    headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: keywordsCsv }),
   });
 
-  if (!res.ok) {
-    throw new Error(`AskGRE API error: ${res.status}`);
-  }
-
+  if (!res.ok) throw new Error(`AskGRE API error: ${res.status}`);
   const data = await res.json();
   return data.solutions || [];
 }
 
-function get6mType(domain6m) {
-  if (!domain6m) return 'Method';
-  const d = domain6m.toLowerCase();
-  if (d.includes('manpower') || d.includes('man')) return 'Manpower';
-  if (d.includes('machine') || d.includes('equipment')) return 'Machine';
-  if (d.includes('material') || d.includes('raw material')) return 'Material';
-  if (d.includes('market')) return 'Market';
-  if (d.includes('money') || d.includes('finance') || d.includes('fund')) return 'Money';
-  return 'Method';
+function priorityClass(priority) {
+  if (!priority) return '';
+  const p = priority.toLowerCase();
+  if (p === 'high') return 'text-red-600 font-semibold';
+  if (p === 'medium') return 'text-amber-600 font-semibold';
+  if (p === 'low') return 'text-green-600 font-semibold';
+  return '';
 }
 
-export default function SolutionsTab({ result, onLog }) {
+export default function SolutionsTab({ result, onResultUpdate, onLog }) {
   const [needs, setNeeds] = useState(() => {
     if (!result?.needs) return [];
     return result.needs.map((n, i) => ({
       ...n,
       _id: i,
-      _keywords: n._keywords || null,
+      _keywords: n._keywords || '',
+      _solutions: n._solutions || null,
       _generatingKeywords: false,
       _checkingSolutions: false,
-      _solutions: n._solutions || null,
+      _solutionsExpanded: false,
       _apiError: null,
-      _solutionsOpen: false,
     }));
   });
+
+  const [bulkGenerating, setBulkGenerating] = useState(false);
+  const [bulkChecking, setBulkChecking] = useState(false);
+  const [progress, setProgress] = useState(0);
+
+  const updateNeed = useCallback((idx, patch) => {
+    setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, ...patch } : n));
+  }, []);
+
+  const saveToResult = useCallback((updatedNeeds) => {
+    if (!onResultUpdate) return;
+    onResultUpdate({ ...result, needs: updatedNeeds.map(n => ({
+      need: n.need,
+      category: n.category,
+      priority: n.priority,
+      _keywords: n._keywords,
+      _solutions: n._solutions,
+    }))});
+  }, [result, onResultUpdate]);
 
   const handleGenerateKeywords = useCallback(async (idx) => {
     const need = needs[idx];
     if (!need) return;
-    setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, _generatingKeywords: true, _apiError: null } : n));
+    updateNeed(idx, { _generatingKeywords: true, _apiError: null });
     try {
-      const keywords = await extractKeywords(need.need, onLog);
-      setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, _keywords: keywords, _generatingKeywords: false } : n));
-      onLog?.(`Keywords: ${keywords.join(', ')}`, 'success');
+      const keywords = await extractKeywords(need.need);
+      updateNeed(idx, { _keywords: keywords, _generatingKeywords: false });
+      onLog?.(`Keywords generated for need #${idx + 1}`, 'success');
     } catch (e) {
-      setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, _generatingKeywords: false, _apiError: e.message } : n));
+      updateNeed(idx, { _generatingKeywords: false, _apiError: e.message });
       onLog?.(e.message, 'error');
     }
-  }, [needs, onLog]);
+  }, [needs, updateNeed, onLog]);
 
-  const handleSearchGRE = useCallback(async (idx) => {
+  const handleGenerateAll = useCallback(async () => {
+    setBulkGenerating(true);
+    setProgress(0);
+    let completed = 0;
+    const total = needs.filter(n => !n._keywords).length;
+    if (total === 0) { setBulkGenerating(false); return; }
+    for (const need of needs) {
+      if (need._keywords) { completed++; setProgress(completed); continue; }
+      try {
+        const keywords = await extractKeywords(need.need);
+        updateNeed(need._id, { _keywords: keywords, _generatingKeywords: false });
+        completed++;
+        setProgress(completed);
+        onLog?.(`Keywords generated for need #${need._id + 1}`, 'success');
+      } catch (e) {
+        updateNeed(need._id, { _generatingKeywords: false, _apiError: e.message });
+        completed++;
+        setProgress(completed);
+        onLog?.(e.message, 'error');
+      }
+    }
+    setBulkGenerating(false);
+  }, [needs, updateNeed, onLog]);
+
+  const handleCheckSolutions = useCallback(async (idx) => {
     const need = needs[idx];
     if (!need?._keywords) return;
-    setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, _checkingSolutions: true, _apiError: null } : n));
+    updateNeed(idx, { _checkingSolutions: true, _apiError: null });
     try {
-      const solutions = await searchAskGRE(need._keywords, onLog);
-      setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, _solutions: solutions, _checkingSolutions: false, _solutionsOpen: true } : n));
+      const solutions = await searchAskGRE(need._keywords);
+      const updatedNeeds = needs.map((n, i) => i === idx ? { ...n, _solutions: solutions, _checkingSolutions: false, _solutionsExpanded: false } : n);
+      setNeeds(updatedNeeds);
       onLog?.(`Found ${solutions.length} solutions for need #${idx + 1}`, 'success');
+      saveToResult(updatedNeeds);
     } catch (e) {
-      setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, _checkingSolutions: false, _apiError: e.message } : n));
+      updateNeed(idx, { _checkingSolutions: false, _apiError: e.message });
       onLog?.(e.message, 'error');
     }
-  }, [needs, onLog]);
+  }, [needs, updateNeed, onLog, saveToResult]);
 
-  const toggleSolutions = (idx) => {
-    setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, _solutionsOpen: !n._solutionsOpen } : n));
-  };
+  const handleCheckAll = useCallback(async () => {
+    setBulkChecking(true);
+    setProgress(0);
+    const withKeywords = needs.filter(n => n._keywords);
+    if (withKeywords.length === 0) { setBulkChecking(false); return; }
+    let completed = 0;
+    for (const need of withKeywords) {
+      try {
+        const solutions = await searchAskGRE(need._keywords);
+        const updatedNeeds = needs.map((n, i) => i === need._id ? { ...n, _solutions: solutions, _checkingSolutions: false } : n);
+        setNeeds(updatedNeeds);
+        completed++;
+        setProgress(completed);
+        onLog?.(`Found ${solutions.length} solutions for need #${need._id + 1}`, 'success');
+        saveToResult(updatedNeeds);
+      } catch (e) {
+        updateNeed(need._id, { _checkingSolutions: false, _apiError: e.message });
+        completed++;
+        setProgress(completed);
+        onLog?.(e.message, 'error');
+      }
+    }
+    setBulkChecking(false);
+  }, [needs, updateNeed, onLog, saveToResult]);
+
+  const handleKeywordsChange = useCallback((idx, value) => {
+    updateNeed(idx, { _keywords: value });
+  }, [updateNeed]);
+
+  const toggleSolutions = useCallback((idx) => {
+    setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, _solutionsExpanded: !n._solutionsExpanded } : n));
+  }, []);
 
   if (!result?.needs || result.needs.length === 0) {
     return (
-      <div className="text-center py-12 text-slate-400 text-sm">
-        No needs found. Run the summarizer first.
+      <div className="flex items-center justify-center h-full text-slate-400 text-sm">
+        No needs found. Run Need Analyser first.
       </div>
     );
   }
 
+  const isBusy = bulkGenerating || bulkChecking;
+
   return (
-    <div className="space-y-4">
-      {needs.map((need, idx) => (
-        <div key={need._id} className="border rounded-lg overflow-hidden bg-white">
-          <div className="p-4 bg-slate-50">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-slate-800">{need.need}</p>
-                <p className="text-xs text-slate-500 mt-1">
-                  {need.category}
-                  {need.priority && <span> · <span className={need.priority === 'High' ? 'text-red-600 font-semibold' : need.priority === 'Medium' ? 'text-amber-600 font-semibold' : 'text-green-600 font-semibold'}>{need.priority}</span></span>}
-                </p>
-              </div>
-              <div className="flex flex-col gap-2 items-end shrink-0">
-                <button
-                  onClick={() => handleGenerateKeywords(idx)}
-                  disabled={need._generatingKeywords}
-                  className="px-3 py-1.5 bg-indigo-600 text-white text-xs rounded-lg hover:bg-indigo-700 disabled:opacity-50"
-                >
-                  {need._generatingKeywords ? '...' : 'Generate Keywords'}
-                </button>
-                {need._keywords && (
-                  <button
-                    onClick={() => handleSearchGRE(idx)}
-                    disabled={need._checkingSolutions}
-                    className="px-3 py-1.5 bg-emerald-600 text-white text-xs rounded-lg hover:bg-emerald-700 disabled:opacity-50"
-                  >
-                    {need._checkingSolutions ? '...' : 'Search GRE'}
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {need._keywords && (
-              <div className="mt-3">
-                <p className="text-xs text-slate-500 mb-1.5">Keywords:</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {need._keywords.map((kw, ki) => (
-                    <span key={ki} className="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-xs rounded-full">{kw}</span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {need._apiError && (
-              <p className="mt-2 text-xs text-red-600">{need._apiError}</p>
-            )}
-
-            {need._solutions && need._solutions.length > 0 && (
-              <button
-                onClick={() => toggleSolutions(idx)}
-                className="mt-3 text-xs text-indigo-600 hover:text-indigo-800 font-medium"
-              >
-                {need._solutionsOpen ? '▲' : '▼'} Solutions ({need._solutions.length})
-              </button>
-            )}
-          </div>
-
-          {need._solutionsOpen && need._solutions && need._solutions.length > 0 && (
-            <div className="border-t">
-              <table className="w-full text-xs">
-                <thead className="bg-slate-100">
-                  <tr>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-700">Provider</th>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-700">Solution</th>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-700">6M Type</th>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-700">Score</th>
-                    <th className="px-3 py-2 text-left font-semibold text-slate-700">Link</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {need._solutions.map((sol, si) => (
-                    <tr key={si} className="border-t border-slate-100 hover:bg-slate-50">
-                      <td className="px-3 py-2 text-slate-600">{sol.provider_name || sol.provider || 'Unknown'}</td>
-                      <td className="px-3 py-2 text-slate-800 font-medium">{sol.offering_name || sol.name || 'Solution'}</td>
-                      <td className="px-3 py-2 text-slate-600">{get6mType(sol['6m_type'] || sol.domain_6m)}</td>
-                      <td className="px-3 py-2">
-                        <span className={`font-semibold ${(sol.relevance_score || sol.matchScore || 0) >= 100 ? 'text-green-600' : 'text-slate-600'}`}>
-                          {sol.relevance_score || sol.matchScore || 0}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2">
-                        {sol.offering_link || sol.gre_link ? (
-                          <a href={sol.offering_link || sol.gre_link} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-800 underline">View</a>
-                        ) : '-'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {need._solutionsOpen && need._solutions && need._solutions.length === 0 && (
-            <div className="border-t p-4 text-center text-slate-400 text-sm">
-              No solutions found for these keywords.
-            </div>
-          )}
+    <div className="flex flex-col h-full">
+      <div className="flex items-center justify-between px-4 py-3 bg-white border-b">
+        <h3 className="text-sm font-semibold text-slate-700">Solutions</h3>
+        <div className="flex gap-2">
+          <button
+            onClick={handleGenerateAll}
+            disabled={isBusy}
+            className="px-3 py-1.5 bg-indigo-600 text-white text-xs rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+          >
+            {bulkGenerating ? `Generating... (${progress}/${needs.filter(n => !n._keywords).length || 1})` : 'Generate All Keywords'}
+          </button>
+          <button
+            onClick={handleCheckAll}
+            disabled={isBusy}
+            className="px-3 py-1.5 bg-emerald-600 text-white text-xs rounded-lg hover:bg-emerald-700 disabled:opacity-50"
+          >
+            {bulkChecking ? `Checking... (${progress}/${needs.filter(n => n._keywords).length || 1})` : 'Check All Solutions'}
+          </button>
         </div>
-      ))}
+      </div>
+
+      <div className="flex-1 overflow-auto">
+        <table className="w-full text-xs border-collapse">
+          <thead className="bg-slate-100 sticky top-0">
+            <tr>
+              <th className="px-3 py-2 text-left font-semibold text-slate-700">Need</th>
+              <th className="px-3 py-2 text-left font-semibold text-slate-700 w-64">Need Keywords</th>
+              <th className="px-3 py-2 text-left font-semibold text-slate-700">Category</th>
+              <th className="px-3 py-2 text-left font-semibold text-slate-700">Priority</th>
+              <th className="px-3 py-2 text-left font-semibold text-slate-700">Potential Solution Stack</th>
+            </tr>
+          </thead>
+          <tbody>
+            {needs.map((need, idx) => (
+              <tr key={need._id} className="border-t border-slate-200 hover:bg-slate-50">
+                <td className="px-3 py-2 text-slate-800">{need.need}</td>
+                <td className="px-3 py-2">
+                  <div className="flex gap-1">
+                    <input
+                      type="text"
+                      value={need._keywords}
+                      onChange={(e) => handleKeywordsChange(idx, e.target.value)}
+                      className="flex-1 border border-slate-300 rounded px-2 py-1 text-xs text-slate-700 focus:outline-none focus:border-indigo-400"
+                      placeholder="Enter keywords..."
+                    />
+                    <button
+                      onClick={() => handleGenerateKeywords(idx)}
+                      disabled={need._generatingKeywords || isBusy}
+                      className="shrink-0 px-2 py-1 bg-indigo-100 text-indigo-700 text-xs rounded hover:bg-indigo-200 disabled:opacity-50"
+                      title="Generate keywords from need text"
+                    >
+                      {need._generatingKeywords ? '...' : 'Gen'}
+                    </button>
+                  </div>
+                  {need._apiError && (
+                    <p className="mt-1 text-red-600">{need._apiError}</p>
+                  )}
+                </td>
+                <td className="px-3 py-2">
+                  <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs">{need.category || 'Other'}</span>
+                </td>
+                <td className="px-3 py-2">
+                  <span className={priorityClass(need.priority)}>{need.priority || 'Medium'}</span>
+                </td>
+                <td className="px-3 py-2">
+                  {need._solutions === null && !need._checkingSolutions && (
+                    need._keywords ? (
+                      <button
+                        onClick={() => handleCheckSolutions(idx)}
+                        className="text-indigo-600 hover:text-indigo-800 underline"
+                      >
+                        Check Solutions
+                      </button>
+                    ) : (
+                      <span className="text-slate-400">Enter keywords first</span>
+                    )
+                  )}
+                  {need._checkingSolutions && (
+                    <span className="text-slate-500">Searching...</span>
+                  )}
+                  {need._solutions && need._solutions.length > 0 && (
+                    <div className="space-y-1">
+                      {(need._solutionsExpanded ? need._solutions : need._solutions.slice(0, 5)).map((sol, si) => (
+                        <div key={si} className="text-xs border-b border-slate-100 pb-1 last:border-0">
+                          <div className="flex items-center gap-1">
+                            <span className="font-mono text-[10px] text-slate-400">[{sol.relevance_score || 0}]</span>
+                            {sol.offering_link ? (
+                              <a href={sol.offering_link} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-800 underline font-medium">
+                                {sol.offering_name || 'Solution'}
+                              </a>
+                            ) : (
+                              <span className="font-medium text-slate-700">{sol.offering_name || 'Solution'}</span>
+                            )}
+                          </div>
+                          <div className="text-[10px] text-slate-500">
+                            {sol['6m_type'] ? <span>6M: {sol['6m_type']} </span> : ''}
+                            {sol.provider_name ? <span>Provider: {sol.provider_name}</span> : ''}
+                          </div>
+                        </div>
+                      ))}
+                      {need._solutions.length > 5 && (
+                        <button
+                          onClick={() => toggleSolutions(idx)}
+                          className="text-indigo-600 hover:text-indigo-800 text-[10px]"
+                        >
+                          {need._solutionsExpanded ? '▲ Show less' : `▼ +${need._solutions.length - 5} more`}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {need._solutions && need._solutions.length === 0 && (
+                    <span className="text-slate-400">No solutions found</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

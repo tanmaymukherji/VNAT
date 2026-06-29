@@ -6,6 +6,7 @@ import FolderImporter from './components/Importer/FolderImporter';
 import DocxImporter from './components/Importer/DocxImporter';
 import SettingsPanel from './components/SettingsPanel';
 import ErrorBanner from './components/ErrorBanner';
+import SolutionsTab from './components/Summarizer/SolutionsTab';
 import { initializeStorage, retryInitialization, listProjects, saveProject, deleteProject, buildHtmlContent } from './storage';
 
 function preferredEditorTab(project) {
@@ -303,7 +304,7 @@ export default function App() {
                     : 'border-transparent text-gray-600 hover:text-gray-800 hover:bg-gray-100'
                 }`}
               >
-                OCR Validation
+                Read Data
               </button>
               <button
                 onClick={() => setEditorTab('editor')}
@@ -315,6 +316,18 @@ export default function App() {
               >
                 Need Analyser
               </button>
+              {analysisResult && (
+                <button
+                  onClick={() => setEditorTab('solutions')}
+                  className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                    editorTab === 'solutions'
+                      ? 'border-indigo-600 text-indigo-700 bg-white'
+                      : 'border-transparent text-gray-600 hover:text-gray-800 hover:bg-gray-100'
+                  }`}
+                >
+                  Solutions
+                </button>
+              )}
             </div>
 
             {editorTab === 'ocr' ? (
@@ -324,6 +337,12 @@ export default function App() {
                 sources={activeProject.sources || []}
                 paragraphs={activeProject.paragraphsArray || []}
                 onSaveParagraphs={handleSaveOcr}
+              />
+            ) : editorTab === 'solutions' ? (
+              <SolutionsTab
+                result={analysisResult}
+                onResultUpdate={handleAnalysisResult}
+                onLog={handleEditorLog}
               />
             ) : (
               <UnifiedEditor
