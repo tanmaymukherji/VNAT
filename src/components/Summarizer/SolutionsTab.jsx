@@ -43,15 +43,31 @@ async function searchAskGRE(keywordsCsv) {
   const key = localStorage.getItem('gre_api_key');
   if (!key) throw new Error('No AskGRE API key. Add it in Settings.');
 
-  const res = await fetch(ASKGRE_URL, {
-    method: 'POST',
-    headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message: keywordsCsv }),
-  });
+  const items = keywordsCsv.split(',').map(k => k.trim()).filter(Boolean);
+  if (items.length === 0) return [];
 
-  if (!res.ok) throw new Error(`AskGRE API error: ${res.status}`);
-  const data = await res.json();
-  return data.solutions || [];
+  const allSolutions = [];
+  const seen = new Set();
+
+  for (let i = 0; i < items.length; i += 3) {
+    const chunk = items.slice(i, i + 3);
+    const res = await fetch(ASKGRE_URL, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: chunk.join(', ') }),
+    });
+    if (!res.ok) throw new Error(`AskGRE API error: ${res.status}`);
+    const data = await res.json();
+    for (const sol of (data.solutions || [])) {
+      const dedupKey = sol.offering_link || sol.offering_name || '';
+      if (dedupKey && !seen.has(dedupKey)) {
+        seen.add(dedupKey);
+        allSolutions.push(sol);
+      }
+    }
+  }
+
+  return allSolutions;
 }
 
 function priorityClass(priority) {
@@ -281,7 +297,7 @@ export default function SolutionsTab({ result, onResultUpdate, onLog }) {
           <thead className="bg-slate-100 sticky top-0">
             <tr>
               <th className="px-3 py-2 text-left font-semibold text-slate-700">Need</th>
-              <th className="px-3 py-2 text-left font-semibold text-slate-700 w-64">Need Keywords</th>
+              <th className="px-3 py-2 text-left font-semibold text-slate-700 w-96">Need Keywords</th>
               <th className="px-3 py-2 text-left font-semibold text-slate-700">Category</th>
               <th className="px-3 py-2 text-left font-semibold text-slate-700">Priority</th>
               <th className="px-3 py-2 text-left font-semibold text-slate-700">Potential Solution Stack</th>
@@ -292,13 +308,13 @@ export default function SolutionsTab({ result, onResultUpdate, onLog }) {
               <tr key={need._id} className="border-t border-slate-200 hover:bg-slate-50">
                 <td className="px-3 py-2 text-slate-800">{need.need}</td>
                 <td className="px-3 py-2">
-                  <div className="flex gap-1">
-                    <input
-                      type="text"
+                  <div className="flex gap-1 items-start">
+                    <textarea
                       value={need._keywords}
                       onChange={(e) => handleKeywordsChange(idx, e.target.value)}
-                      className="flex-1 border border-slate-300 rounded px-2 py-1 text-xs text-slate-700 focus:outline-none focus:border-indigo-400"
-                      placeholder="Enter keywords..."
+                      className="flex-1 border border-slate-300 rounded px-2 py-1 text-xs text-slate-700 focus:outline-none focus:border-indigo-400 resize-y min-h-[3.5em]"
+                      placeholder="Enter keywords (comma-separated)..."
+                      rows={2}
                     />
                     <button
                       onClick={() => handleGenerateKeywords(idx)}
