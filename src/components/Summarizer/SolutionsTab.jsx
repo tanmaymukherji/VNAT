@@ -222,7 +222,7 @@ export default function SolutionsTab({ result, onResultUpdate, onLog }) {
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto min-h-0">
         <table className="w-full text-xs border-collapse">
           <thead className="bg-slate-100 sticky top-0">
             <tr>
