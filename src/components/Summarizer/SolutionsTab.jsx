@@ -1,4 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
+import { utils, write } from 'xlsx';
+import { saveAs } from 'file-saver';
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const ASKGRE_URL = 'https://askgre.grameee.org/api/chat';
@@ -200,11 +202,59 @@ export default function SolutionsTab({ result, onResultUpdate, onLog }) {
 
   const isBusy = bulkGenerating || bulkChecking;
 
+  const handleClearSolutions = useCallback(() => {
+    setNeeds(prev => prev.map(n => ({ ...n, _solutions: null, _solutionsExpanded: false })));
+    if (onResultUpdate) {
+      onResultUpdate({ ...resultRef.current, needs: [] });
+    }
+  }, [onResultUpdate]);
+
+  const handleExportXlsx = useCallback(() => {
+    const snapshot = needs;
+    const rows = [];
+    const cols = ['Need', 'Need Keywords', 'Category', 'Priority', 'Provider Name', 'Offering Name', '6M Type', 'Score', 'Offering Link'];
+    for (const n of snapshot) {
+      if (!n._solutions || n._solutions.length === 0) {
+        rows.push({ 'Need': n.need, 'Need Keywords': n._keywords, 'Category': n.category, 'Priority': n.priority, 'Provider Name': '', 'Offering Name': '', '6M Type': '', 'Score': '', 'Offering Link': '' });
+      } else {
+        for (const sol of n._solutions) {
+          rows.push({
+            'Need': n.need,
+            'Need Keywords': n._keywords,
+            'Category': n.category,
+            'Priority': n.priority,
+            'Provider Name': sol.provider_name || '',
+            'Offering Name': sol.offering_name || '',
+            '6M Type': sol['6m_type'] || '',
+            'Score': sol.relevance_score ?? '',
+            'Offering Link': sol.offering_link || '',
+          });
+        }
+      }
+    }
+    const ws = utils.json_to_sheet(rows);
+    ws['!cols'] = cols.map(() => ({ wch: 25 }));
+    const wb = utils.book_new();
+    utils.book_append_sheet(wb, ws, 'Solutions');
+    const name = (resultRef.current?.village_name || 'solutions').replace(/[\\/:*?"<>|]/g, '_');
+    const binStr = write(wb, { bookType: 'xlsx', type: 'binary' });
+    const bytes = new Uint8Array(binStr.length);
+    for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i) & 0xFF;
+    const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    saveAs(blob, name + '_solutions.xlsx');
+  }, [needs]);
+
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col flex-1 min-h-0">
       <div className="flex items-center justify-between px-4 py-3 bg-white border-b">
         <h3 className="text-sm font-semibold text-slate-700">Solutions</h3>
         <div className="flex gap-2">
+          <button
+            onClick={handleExportXlsx}
+            className="px-3 py-1.5 bg-green-600 text-white text-xs rounded-lg hover:bg-green-700"
+          >
+            Export Solutions
+          </button>
           <button
             onClick={handleGenerateAll}
             disabled={isBusy}
@@ -218,6 +268,13 @@ export default function SolutionsTab({ result, onResultUpdate, onLog }) {
             className="px-3 py-1.5 bg-emerald-600 text-white text-xs rounded-lg hover:bg-emerald-700 disabled:opacity-50"
           >
             {bulkChecking ? `Checking... (${progress}/${needs.filter(n => n._keywords).length || 1})` : 'Check All Solutions'}
+          </button>
+          <button
+            onClick={handleClearSolutions}
+            disabled={isBusy}
+            className="px-3 py-1.5 bg-red-600 text-white text-xs rounded-lg hover:bg-red-700 disabled:opacity-50"
+          >
+            Clear Solutions
           </button>
         </div>
       </div>
