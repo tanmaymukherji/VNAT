@@ -6,10 +6,23 @@ const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const ASKGRE_URL = 'https://askgre.grameee.org/api/chat';
 const KEYWORD_MODEL = 'llama-3.3-70b-versatile';
 
-async function extractKeywords(needText) {
+async function groqFetch(prompt, maxTokens = 300) {
   const key = localStorage.getItem('groq_api_key');
   if (!key) throw new Error('No Groq API key. Add it in Settings.');
+  const res = await fetch(GROQ_URL, {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: KEYWORD_MODEL, messages: [{ role: 'user', content: prompt }], temperature: 0.2, max_tokens: maxTokens }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(`Groq API error: ${err.error?.message || res.statusText}`);
+  }
+  const data = await res.json();
+  return (data.choices?.[0]?.message?.content || '').trim();
+}
 
+async function extractKeywords(needText) {
   const prompt = `You are an expert at extracting search keywords from village need statements.
 Given a need statement, extract 3-6 specific, diverse search keywords that would help find matching solutions from a livelihood/development solutions database.
 Return ONLY a comma-separated list of keywords — no explanation, no quotes, no formatting.
@@ -18,56 +31,41 @@ If the need has multiple distinct topics, extract keywords for each topic separa
 Need statement: "${needText}"
 
 Keywords:`;
-
-  const res = await fetch(GROQ_URL, {
-    method: 'POST',
-    headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: KEYWORD_MODEL,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.2,
-      max_tokens: 100,
-    }),
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(`Groq API error: ${err.error?.message || res.statusText}`);
-  }
-
-  const data = await res.json();
-  return (data.choices?.[0]?.message?.content || '').trim();
+  return groqFetch(prompt, 100);
 }
 
-async function searchAskGRE(keywordsCsv) {
+async function groupKeywords(keywordsCsv) {
+  const prompt = `Analyze the following comma-separated keywords and group them into distinct topic categories.
+For each group, provide a concise category name and the list of relevant keywords from the input.
+Return ONLY a valid JSON array, no other text:
+[
+  {"category": "Short Category Name", "keywords": ["keyword1", "keyword2"]},
+  {"category": "Another Category", "keywords": ["keyword3", "keyword4"]}
+]
+
+If all keywords belong to one topic, return a single group.
+Each keyword must appear in exactly one group.
+
+Keywords: ${keywordsCsv}`;
+  const raw = await groqFetch(prompt, 400);
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return [{ category: 'General', keywords: keywordsCsv.split(',').map(k => k.trim()).filter(Boolean) }];
+  }
+}
+
+async function searchAskGRE(query) {
   const key = localStorage.getItem('gre_api_key');
   if (!key) throw new Error('No AskGRE API key. Add it in Settings.');
-
-  const items = keywordsCsv.split(',').map(k => k.trim()).filter(Boolean);
-  if (items.length === 0) return [];
-
-  const allSolutions = [];
-  const seen = new Set();
-
-  for (let i = 0; i < items.length; i += 3) {
-    const chunk = items.slice(i, i + 3);
-    const res = await fetch(ASKGRE_URL, {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: chunk.join(', ') }),
-    });
-    if (!res.ok) throw new Error(`AskGRE API error: ${res.status}`);
-    const data = await res.json();
-    for (const sol of (data.solutions || [])) {
-      const dedupKey = sol.offering_link || sol.offering_name || '';
-      if (dedupKey && !seen.has(dedupKey)) {
-        seen.add(dedupKey);
-        allSolutions.push(sol);
-      }
-    }
-  }
-
-  return allSolutions;
+  const res = await fetch(ASKGRE_URL, {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: query }),
+  });
+  if (!res.ok) throw new Error(`AskGRE API error: ${res.status}`);
+  const data = await res.json();
+  return data.solutions || [];
 }
 
 function priorityClass(priority) {
@@ -77,16 +75,6 @@ function priorityClass(priority) {
   if (p === 'medium') return 'text-amber-600 font-semibold';
   if (p === 'low') return 'text-green-600 font-semibold';
   return '';
-}
-
-function serializeNeeds(needsArr) {
-  return needsArr.map(n => ({
-    need: n.need,
-    category: n.category,
-    priority: n.priority,
-    _keywords: n._keywords,
-    _solutions: n._solutions,
-  }));
 }
 
 export default function SolutionsTab({ result, onResultUpdate, onLog }) {
@@ -99,7 +87,7 @@ export default function SolutionsTab({ result, onResultUpdate, onLog }) {
       ...n,
       _id: i,
       _keywords: n._keywords || '',
-      _solutions: n._solutions || null,
+      _keywordGroups: null,
       _generatingKeywords: false,
       _checkingSolutions: false,
       _solutionsExpanded: false,
@@ -110,14 +98,6 @@ export default function SolutionsTab({ result, onResultUpdate, onLog }) {
   const [bulkGenerating, setBulkGenerating] = useState(false);
   const [bulkChecking, setBulkChecking] = useState(false);
   const [progress, setProgress] = useState(0);
-
-  const saveToResult = useCallback(() => {
-    if (!onResultUpdate) return;
-    setNeeds(prev => {
-      onResultUpdate({ ...resultRef.current, needs: serializeNeeds(prev) });
-      return prev;
-    });
-  }, [onResultUpdate]);
 
   const handleGenerateKeywords = useCallback(async (idx) => {
     setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, _generatingKeywords: true, _apiError: null } : n));
@@ -145,19 +125,22 @@ export default function SolutionsTab({ result, onResultUpdate, onLog }) {
       try {
         const keywords = await extractKeywords(need.need);
         setNeeds(prev => prev.map((n, i) => i === need._id ? { ...n, _keywords: keywords, _generatingKeywords: false } : n));
-        completed++;
-        setProgress(completed);
+        completed++; setProgress(completed);
         onLog?.(`Keywords generated for need #${need._id + 1}`, 'success');
       } catch (e) {
         setNeeds(prev => prev.map((n, i) => i === need._id ? { ...n, _generatingKeywords: false, _apiError: e.message } : n));
-        completed++;
-        setProgress(completed);
+        completed++; setProgress(completed);
         onLog?.(e.message, 'error');
       }
     }
     setBulkGenerating(false);
-    saveToResult();
-  }, [needs, onLog, saveToResult]);
+  }, [needs, onLog]);
+
+  const searchGroup = useCallback(async (group) => {
+    const query = group.category + ': ' + group.keywords.join(', ');
+    const solutions = await searchAskGRE(query);
+    return { ...group, solutions };
+  }, []);
 
   const handleCheckSolutions = useCallback(async (idx) => {
     setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, _checkingSolutions: true, _apiError: null } : n));
@@ -165,15 +148,16 @@ export default function SolutionsTab({ result, onResultUpdate, onLog }) {
     const need = snapshot[idx];
     if (!need?._keywords) return;
     try {
-      const solutions = await searchAskGRE(need._keywords);
-      setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, _solutions: solutions, _checkingSolutions: false, _solutionsExpanded: false } : n));
-      onLog?.(`Found ${solutions.length} solutions for need #${idx + 1}`, 'success');
-      saveToResult();
+      const groups = await groupKeywords(need._keywords);
+      const groupedResults = await Promise.all(groups.map(g => searchGroup(g)));
+      setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, _keywordGroups: groupedResults, _checkingSolutions: false, _solutionsExpanded: false } : n));
+      const total = groupedResults.reduce((s, g) => s + (g.solutions || []).length, 0);
+      onLog?.(`Found ${total} solutions across ${groupedResults.length} groups for need #${idx + 1}`, 'success');
     } catch (e) {
       setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, _checkingSolutions: false, _apiError: e.message } : n));
       onLog?.(e.message, 'error');
     }
-  }, [needs, onLog, saveToResult]);
+  }, [needs, onLog, searchGroup]);
 
   const handleCheckAll = useCallback(async () => {
     setBulkChecking(true);
@@ -184,21 +168,20 @@ export default function SolutionsTab({ result, onResultUpdate, onLog }) {
     let completed = 0;
     for (const need of todo) {
       try {
-        const solutions = await searchAskGRE(need._keywords);
-        setNeeds(prev => prev.map((n, i) => i === need._id ? { ...n, _solutions: solutions, _checkingSolutions: false } : n));
-        completed++;
-        setProgress(completed);
-        onLog?.(`Found ${solutions.length} solutions for need #${need._id + 1}`, 'success');
+        const groups = await groupKeywords(need._keywords);
+        const groupedResults = await Promise.all(groups.map(g => searchGroup(g)));
+        setNeeds(prev => prev.map((n, i) => i === need._id ? { ...n, _keywordGroups: groupedResults, _checkingSolutions: false } : n));
+        completed++; setProgress(completed);
+        const total = groupedResults.reduce((s, g) => s + (g.solutions || []).length, 0);
+        onLog?.(`Found ${total} solutions across ${groupedResults.length} groups for need #${need._id + 1}`, 'success');
       } catch (e) {
         setNeeds(prev => prev.map((n, i) => i === need._id ? { ...n, _checkingSolutions: false, _apiError: e.message } : n));
-        completed++;
-        setProgress(completed);
+        completed++; setProgress(completed);
         onLog?.(e.message, 'error');
       }
     }
     setBulkChecking(false);
-    saveToResult();
-  }, [needs, onLog, saveToResult]);
+  }, [needs, onLog, searchGroup]);
 
   const handleKeywordsChange = useCallback((idx, value) => {
     setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, _keywords: value } : n));
@@ -207,6 +190,45 @@ export default function SolutionsTab({ result, onResultUpdate, onLog }) {
   const toggleSolutions = useCallback((idx) => {
     setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, _solutionsExpanded: !n._solutionsExpanded } : n));
   }, []);
+
+  const handleClearSolutions = useCallback(() => {
+    setNeeds(prev => prev.map(n => ({ ...n, _keywordGroups: null, _solutionsExpanded: false })));
+  }, []);
+
+  const handleExportXlsx = useCallback(() => {
+    const snapshot = needs;
+    const cols = ['Need', 'Need Keywords', 'Category', 'Priority', 'Group', 'Provider Name', 'Offering Name', '6M Type', 'Score', 'Offering Link'];
+    const rows = [];
+    for (const n of snapshot) {
+      if (!n._keywordGroups || n._keywordGroups.length === 0) {
+        rows.push({ 'Need': n.need, 'Need Keywords': n._keywords, 'Category': n.category, 'Priority': n.priority, 'Group': '', 'Provider Name': '', 'Offering Name': '', '6M Type': '', 'Score': '', 'Offering Link': '' });
+      } else {
+        for (const g of n._keywordGroups) {
+          if (!g.solutions || g.solutions.length === 0) {
+            rows.push({ 'Need': n.need, 'Need Keywords': g.keywords.join(', '), 'Category': g.category, 'Priority': n.priority, 'Group': g.category, 'Provider Name': '', 'Offering Name': '', '6M Type': '', 'Score': '', 'Offering Link': '' });
+          } else {
+            for (const sol of g.solutions) {
+              rows.push({
+                'Need': n.need, 'Need Keywords': g.keywords.join(', '), 'Category': g.category, 'Priority': n.priority, 'Group': g.category,
+                'Provider Name': sol.provider_name || '', 'Offering Name': sol.offering_name || '', '6M Type': sol['6m_type'] || '',
+                'Score': sol.relevance_score ?? '', 'Offering Link': sol.offering_link || '',
+              });
+            }
+          }
+        }
+      }
+    }
+    const ws = utils.json_to_sheet(rows);
+    ws['!cols'] = cols.map(() => ({ wch: 22 }));
+    const wb = utils.book_new();
+    utils.book_append_sheet(wb, ws, 'Solutions');
+    const name = (resultRef.current?.village_name || 'solutions').replace(/[\\/:*?"<>|]/g, '_');
+    const binStr = write(wb, { bookType: 'xlsx', type: 'binary' });
+    const bytes = new Uint8Array(binStr.length);
+    for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i) & 0xFF;
+    const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    saveAs(blob, name + '_solutions.xlsx');
+  }, [needs]);
 
   if (!result?.needs || result.needs.length === 0) {
     return (
@@ -218,77 +240,19 @@ export default function SolutionsTab({ result, onResultUpdate, onLog }) {
 
   const isBusy = bulkGenerating || bulkChecking;
 
-  const handleClearSolutions = useCallback(() => {
-    setNeeds(prev => prev.map(n => ({ ...n, _solutions: null, _solutionsExpanded: false })));
-  }, []);
-
-  const handleExportXlsx = useCallback(() => {
-    const snapshot = needs;
-    const rows = [];
-    const cols = ['Need', 'Need Keywords', 'Category', 'Priority', 'Provider Name', 'Offering Name', '6M Type', 'Score', 'Offering Link'];
-    for (const n of snapshot) {
-      if (!n._solutions || n._solutions.length === 0) {
-        rows.push({ 'Need': n.need, 'Need Keywords': n._keywords, 'Category': n.category, 'Priority': n.priority, 'Provider Name': '', 'Offering Name': '', '6M Type': '', 'Score': '', 'Offering Link': '' });
-      } else {
-        for (const sol of n._solutions) {
-          rows.push({
-            'Need': n.need,
-            'Need Keywords': n._keywords,
-            'Category': n.category,
-            'Priority': n.priority,
-            'Provider Name': sol.provider_name || '',
-            'Offering Name': sol.offering_name || '',
-            '6M Type': sol['6m_type'] || '',
-            'Score': sol.relevance_score ?? '',
-            'Offering Link': sol.offering_link || '',
-          });
-        }
-      }
-    }
-    const ws = utils.json_to_sheet(rows);
-    ws['!cols'] = cols.map(() => ({ wch: 25 }));
-    const wb = utils.book_new();
-    utils.book_append_sheet(wb, ws, 'Solutions');
-    const name = (resultRef.current?.village_name || 'solutions').replace(/[\\/:*?"<>|]/g, '_');
-    const binStr = write(wb, { bookType: 'xlsx', type: 'binary' });
-    const bytes = new Uint8Array(binStr.length);
-    for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i) & 0xFF;
-    const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    saveAs(blob, name + '_solutions.xlsx');
-  }, [needs]);
-
   return (
     <div className="flex flex-col flex-1 min-h-0">
       <div className="flex items-center justify-between px-4 py-3 bg-white border-b">
         <h3 className="text-sm font-semibold text-slate-700">Solutions</h3>
         <div className="flex gap-2">
-          <button
-            onClick={handleExportXlsx}
-            className="px-3 py-1.5 bg-green-600 text-white text-xs rounded-lg hover:bg-green-700"
-          >
-            Export Solutions
-          </button>
-          <button
-            onClick={handleGenerateAll}
-            disabled={isBusy}
-            className="px-3 py-1.5 bg-indigo-600 text-white text-xs rounded-lg hover:bg-indigo-700 disabled:opacity-50"
-          >
+          <button onClick={handleExportXlsx} className="px-3 py-1.5 bg-green-600 text-white text-xs rounded-lg hover:bg-green-700">Export Solutions</button>
+          <button onClick={handleGenerateAll} disabled={isBusy} className="px-3 py-1.5 bg-indigo-600 text-white text-xs rounded-lg hover:bg-indigo-700 disabled:opacity-50">
             {bulkGenerating ? `Generating... (${progress}/${needs.filter(n => !n._keywords).length || 1})` : 'Generate All Keywords'}
           </button>
-          <button
-            onClick={handleCheckAll}
-            disabled={isBusy}
-            className="px-3 py-1.5 bg-emerald-600 text-white text-xs rounded-lg hover:bg-emerald-700 disabled:opacity-50"
-          >
+          <button onClick={handleCheckAll} disabled={isBusy} className="px-3 py-1.5 bg-emerald-600 text-white text-xs rounded-lg hover:bg-emerald-700 disabled:opacity-50">
             {bulkChecking ? `Checking... (${progress}/${needs.filter(n => n._keywords).length || 1})` : 'Check All Solutions'}
           </button>
-          <button
-            onClick={handleClearSolutions}
-            disabled={isBusy}
-            className="px-3 py-1.5 bg-red-600 text-white text-xs rounded-lg hover:bg-red-700 disabled:opacity-50"
-          >
-            Clear Solutions
-          </button>
+          <button onClick={handleClearSolutions} disabled={isBusy} className="px-3 py-1.5 bg-red-600 text-white text-xs rounded-lg hover:bg-red-700 disabled:opacity-50">Clear Solutions</button>
         </div>
       </div>
 
@@ -306,8 +270,8 @@ export default function SolutionsTab({ result, onResultUpdate, onLog }) {
           <tbody>
             {needs.map((need, idx) => (
               <tr key={need._id} className="border-t border-slate-200 hover:bg-slate-50">
-                <td className="px-3 py-2 text-slate-800">{need.need}</td>
-                <td className="px-3 py-2">
+                <td className="px-3 py-2 text-slate-800 align-top">{need.need}</td>
+                <td className="px-3 py-2 align-top">
                   <div className="flex gap-1 items-start">
                     <textarea
                       value={need._keywords}
@@ -321,68 +285,68 @@ export default function SolutionsTab({ result, onResultUpdate, onLog }) {
                       disabled={need._generatingKeywords || isBusy}
                       className="shrink-0 px-2 py-1 bg-indigo-100 text-indigo-700 text-xs rounded hover:bg-indigo-200 disabled:opacity-50"
                       title="Generate keywords from need text"
-                    >
-                      {need._generatingKeywords ? '...' : 'Gen'}
-                    </button>
+                    >{need._generatingKeywords ? '...' : 'Gen'}</button>
                   </div>
-                  {need._apiError && (
-                    <p className="mt-1 text-red-600">{need._apiError}</p>
+                  {need._apiError && <p className="mt-1 text-red-600">{need._apiError}</p>}
+                </td>
+                <td className="px-3 py-2 align-top">
+                  {need._keywordGroups ? (
+                    <div className="flex flex-col gap-1">
+                      {need._keywordGroups.map((g, gi) => (
+                        <span key={gi} className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-medium">{g.category}</span>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs">{need.category || 'Other'}</span>
                   )}
                 </td>
-                <td className="px-3 py-2">
-                  <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs">{need.category || 'Other'}</span>
-                </td>
-                <td className="px-3 py-2">
+                <td className="px-3 py-2 align-top">
                   <span className={priorityClass(need.priority)}>{need.priority || 'Medium'}</span>
                 </td>
-                <td className="px-3 py-2">
-                  {need._solutions === null && !need._checkingSolutions && (
+                <td className="px-3 py-2 align-top">
+                  {!need._keywordGroups && !need._checkingSolutions && (
                     need._keywords ? (
-                      <button
-                        onClick={() => handleCheckSolutions(idx)}
-                        className="text-indigo-600 hover:text-indigo-800 underline"
-                      >
-                        Check Solutions
-                      </button>
+                      <button onClick={() => handleCheckSolutions(idx)} className="text-indigo-600 hover:text-indigo-800 underline">Check Solutions</button>
                     ) : (
                       <span className="text-slate-400">Enter keywords first</span>
                     )
                   )}
-                  {need._checkingSolutions && (
-                    <span className="text-slate-500">Searching...</span>
-                  )}
-                  {need._solutions && need._solutions.length > 0 && (
-                    <div className="space-y-1">
-                      {(need._solutionsExpanded ? need._solutions : need._solutions.slice(0, 5)).map((sol, si) => (
-                        <div key={si} className="text-xs border-b border-slate-100 pb-1 last:border-0">
-                          <div className="flex items-center gap-1">
-                            <span className="font-mono text-[10px] text-slate-400">[{sol.relevance_score || 0}]</span>
-                            {sol.offering_link ? (
-                              <a href={sol.offering_link} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-800 underline font-medium">
-                                {sol.offering_name || 'Solution'}
-                              </a>
-                            ) : (
-                              <span className="font-medium text-slate-700">{sol.offering_name || 'Solution'}</span>
-                            )}
-                          </div>
-                          <div className="text-[10px] text-slate-500">
-                            {sol['6m_type'] ? <span>6M: {sol['6m_type']} </span> : ''}
-                            {sol.provider_name ? <span>Provider: {sol.provider_name}</span> : ''}
-                          </div>
+                  {need._checkingSolutions && <span className="text-slate-500">Grouping & searching...</span>}
+                  {need._keywordGroups && need._keywordGroups.length > 0 && (
+                    <div className="space-y-3">
+                      {need._keywordGroups.map((g, gi) => (
+                        <div key={gi}>
+                          <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">{g.category}</p>
+                          {(g.solutions || []).length > 0 ? (
+                            <div className="space-y-1">
+                              {(need._solutionsExpanded ? g.solutions : g.solutions.slice(0, 5)).map((sol, si) => (
+                                <div key={si} className="text-xs border-b border-slate-100 pb-1 last:border-0">
+                                  <div className="flex items-center gap-1">
+                                    <span className="font-mono text-[10px] text-slate-400">[{sol.relevance_score || 0}]</span>
+                                    {sol.offering_link ? (
+                                      <a href={sol.offering_link} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-800 underline font-medium">{sol.offering_name || 'Solution'}</a>
+                                    ) : (
+                                      <span className="font-medium text-slate-700">{sol.offering_name || 'Solution'}</span>
+                                    )}
+                                  </div>
+                                  <div className="text-[10px] text-slate-500">
+                                    {sol['6m_type'] ? <span>6M: {sol['6m_type']} </span> : ''}
+                                    {sol.provider_name ? <span>Provider: {sol.provider_name}</span> : ''}
+                                  </div>
+                                </div>
+                              ))}
+                              {g.solutions.length > 5 && (
+                                <button onClick={() => toggleSolutions(idx)} className="text-indigo-600 hover:text-indigo-800 text-[10px]">
+                                  {need._solutionsExpanded ? '▲ Show less' : `▼ +${g.solutions.length - 5} more`}
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-slate-400 text-[10px]">No solutions found</span>
+                          )}
                         </div>
                       ))}
-                      {need._solutions.length > 5 && (
-                        <button
-                          onClick={() => toggleSolutions(idx)}
-                          className="text-indigo-600 hover:text-indigo-800 text-[10px]"
-                        >
-                          {need._solutionsExpanded ? '▲ Show less' : `▼ +${need._solutions.length - 5} more`}
-                        </button>
-                      )}
                     </div>
-                  )}
-                  {need._solutions && need._solutions.length === 0 && (
-                    <span className="text-slate-400">No solutions found</span>
                   )}
                 </td>
               </tr>
