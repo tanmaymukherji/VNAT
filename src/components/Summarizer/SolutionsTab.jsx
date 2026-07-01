@@ -59,9 +59,7 @@ async function searchAskGRE(query, state) {
   const key = localStorage.getItem('gre_api_key');
   if (!key) throw new Error('No AskGRE API key. Add it in Settings.');
   const body = { message: query };
-  if (state) {
-    body.filters = { geography: state };
-  }
+  body.filters = { geography: state || '' };
   const res = await fetch(ASKGRE_URL, {
     method: 'POST',
     headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
