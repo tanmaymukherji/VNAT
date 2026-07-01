@@ -3,7 +3,7 @@ import { utils, write } from 'xlsx';
 import { saveAs } from 'file-saver';
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const ASKGRE_URL = 'https://askgre.grameee.org/api/chat';
+const ASKGRE_URL = import.meta.env.DEV ? '/api/askgre' : 'https://askgre.grameee.org/api/chat';
 const KEYWORD_MODEL = 'llama-3.3-70b-versatile';
 
 async function groqFetch(prompt, maxTokens = 300) {
@@ -55,17 +55,21 @@ Keywords: ${keywordsCsv}`;
   }
 }
 
-async function searchAskGRE(query) {
+async function searchAskGRE(query, state) {
   const key = localStorage.getItem('gre_api_key');
   if (!key) throw new Error('No AskGRE API key. Add it in Settings.');
+  const body = { message: query };
+  if (state) {
+    body.filters = { geography: state };
+  }
   const res = await fetch(ASKGRE_URL, {
     method: 'POST',
     headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message: query }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`AskGRE API error: ${res.status}`);
   const data = await res.json();
-  return data.solutions || [];
+  return data.results || data.solutions || [];
 }
 
 function priorityClass(priority) {
@@ -77,9 +81,11 @@ function priorityClass(priority) {
   return '';
 }
 
-export default function SolutionsTab({ result, onResultUpdate, onLog }) {
+export default function SolutionsTab({ result, onResultUpdate, onLog, currentLang }) {
   const resultRef = useRef(result);
   useEffect(() => { resultRef.current = result; }, [result]);
+
+  const villageState = result?.district_state?.split(',').pop()?.trim() || '';
 
   const [needs, setNeeds] = useState(() => {
     if (!result?.needs) return [];
@@ -98,6 +104,7 @@ export default function SolutionsTab({ result, onResultUpdate, onLog }) {
   const [bulkGenerating, setBulkGenerating] = useState(false);
   const [bulkChecking, setBulkChecking] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [limitToState, setLimitToState] = useState(false);
 
   const handleGenerateKeywords = useCallback(async (idx) => {
     setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, _generatingKeywords: true, _apiError: null } : n));
@@ -136,9 +143,9 @@ export default function SolutionsTab({ result, onResultUpdate, onLog }) {
     setBulkGenerating(false);
   }, [needs, onLog]);
 
-  const searchGroup = useCallback(async (group) => {
+  const searchGroup = useCallback(async (group, state) => {
     const query = group.category + ': ' + group.keywords.join(', ');
-    const solutions = await searchAskGRE(query);
+    const solutions = await searchAskGRE(query, state);
     return { ...group, solutions };
   }, []);
 
@@ -149,7 +156,8 @@ export default function SolutionsTab({ result, onResultUpdate, onLog }) {
     if (!need?._keywords) return;
     try {
       const groups = await groupKeywords(need._keywords);
-      const groupedResults = await Promise.all(groups.map(g => searchGroup(g)));
+      const state = limitToState ? villageState : null;
+      const groupedResults = await Promise.all(groups.map(g => searchGroup(g, state)));
       setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, _keywordGroups: groupedResults, _checkingSolutions: false, _solutionsExpanded: false } : n));
       const total = groupedResults.reduce((s, g) => s + (g.solutions || []).length, 0);
       onLog?.(`Found ${total} solutions across ${groupedResults.length} groups for need #${idx + 1}`, 'success');
@@ -157,7 +165,7 @@ export default function SolutionsTab({ result, onResultUpdate, onLog }) {
       setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, _checkingSolutions: false, _apiError: e.message } : n));
       onLog?.(e.message, 'error');
     }
-  }, [needs, onLog, searchGroup]);
+  }, [needs, onLog, searchGroup, limitToState, villageState]);
 
   const handleCheckAll = useCallback(async () => {
     setBulkChecking(true);
@@ -165,11 +173,12 @@ export default function SolutionsTab({ result, onResultUpdate, onLog }) {
     const snapshot = needs;
     const todo = snapshot.filter(n => n._keywords);
     if (todo.length === 0) { setBulkChecking(false); return; }
+    const state = limitToState ? villageState : null;
     let completed = 0;
     for (const need of todo) {
       try {
         const groups = await groupKeywords(need._keywords);
-        const groupedResults = await Promise.all(groups.map(g => searchGroup(g)));
+        const groupedResults = await Promise.all(groups.map(g => searchGroup(g, state)));
         setNeeds(prev => prev.map((n, i) => i === need._id ? { ...n, _keywordGroups: groupedResults, _checkingSolutions: false } : n));
         completed++; setProgress(completed);
         const total = groupedResults.reduce((s, g) => s + (g.solutions || []).length, 0);
@@ -181,7 +190,7 @@ export default function SolutionsTab({ result, onResultUpdate, onLog }) {
       }
     }
     setBulkChecking(false);
-  }, [needs, onLog, searchGroup]);
+  }, [needs, onLog, searchGroup, limitToState, villageState]);
 
   const handleKeywordsChange = useCallback((idx, value) => {
     setNeeds(prev => prev.map((n, i) => i === idx ? { ...n, _keywords: value } : n));
@@ -210,8 +219,11 @@ export default function SolutionsTab({ result, onResultUpdate, onLog }) {
             for (const sol of g.solutions) {
               rows.push({
                 'Need': n.need, 'Need Keywords': g.keywords.join(', '), 'Category': g.category, 'Priority': n.priority, 'Group': g.category,
-                'Provider Name': sol.provider_name || '', 'Offering Name': sol.offering_name || '', '6M Type': sol['6m_type'] || '',
-                'Score': sol.relevance_score ?? '', 'Offering Link': sol.offering_link || '',
+                'Provider Name': sol.solution?.trader?.organisation_name || sol.provider_name || '',
+                'Offering Name': sol.offering_name || '',
+                '6M Type': sol.domain_6m || sol['6m_type'] || '',
+                'Score': sol.matchScore ?? sol.relevance_score ?? '',
+                'Offering Link': sol.gre_link || sol.offering_link || '',
               });
             }
           }
@@ -230,6 +242,14 @@ export default function SolutionsTab({ result, onResultUpdate, onLog }) {
     saveAs(blob, name + '_solutions.xlsx');
   }, [needs]);
 
+  const t = (key) => {
+    const LABELS = {
+      en: { LimitToState: 'Limit to State', Geography: 'Geography' },
+      hi: { LimitToState: 'राज्य तक सीमित', Geography: 'भूगोल' },
+    };
+    return LABELS[currentLang]?.[key] || key;
+  };
+
   if (!result?.needs || result.needs.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-slate-400 text-sm">
@@ -244,7 +264,7 @@ export default function SolutionsTab({ result, onResultUpdate, onLog }) {
     <div className="flex flex-col flex-1 min-h-0">
       <div className="flex items-center justify-between px-4 py-3 bg-white border-b">
         <h3 className="text-sm font-semibold text-slate-700">Solutions</h3>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
           <button onClick={handleExportXlsx} className="px-3 py-1.5 bg-green-600 text-white text-xs rounded-lg hover:bg-green-700">Export Solutions</button>
           <button onClick={handleGenerateAll} disabled={isBusy} className="px-3 py-1.5 bg-indigo-600 text-white text-xs rounded-lg hover:bg-indigo-700 disabled:opacity-50">
             {bulkGenerating ? `Generating... (${progress}/${needs.filter(n => !n._keywords).length || 1})` : 'Generate All Keywords'}
@@ -253,6 +273,17 @@ export default function SolutionsTab({ result, onResultUpdate, onLog }) {
             {bulkChecking ? `Checking... (${progress}/${needs.filter(n => n._keywords).length || 1})` : 'Check All Solutions'}
           </button>
           <button onClick={handleClearSolutions} disabled={isBusy} className="px-3 py-1.5 bg-red-600 text-white text-xs rounded-lg hover:bg-red-700 disabled:opacity-50">Clear Solutions</button>
+          {villageState && (
+            <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer select-none ml-2">
+              <input
+                type="checkbox"
+                checked={limitToState}
+                onChange={e => setLimitToState(e.target.checked)}
+                className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+              />
+              <span>{t('LimitToState')}: <span className="font-semibold text-slate-700">{villageState}</span></span>
+            </label>
+          )}
         </div>
       </div>
 
@@ -322,22 +353,25 @@ export default function SolutionsTab({ result, onResultUpdate, onLog }) {
                               {(need._solutionsExpanded ? g.solutions : g.solutions.slice(0, 5)).map((sol, si) => (
                                 <div key={si} className="text-xs border-b border-slate-100 pb-1 last:border-0">
                                   <div className="flex items-center gap-1">
-                                    <span className="font-mono text-[10px] text-slate-400">[{sol.relevance_score || 0}]</span>
-                                    {sol.offering_link ? (
-                                      <a href={sol.offering_link} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-800 underline font-medium">{sol.offering_name || 'Solution'}</a>
+                                    <span className="font-mono text-[10px] text-slate-400">[{sol.matchScore ?? sol.relevance_score ?? 0}]</span>
+                                    {sol.gre_link || sol.offering_link ? (
+                                      <a href={sol.gre_link || sol.offering_link} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-800 underline font-medium">{sol.offering_name || 'Solution'}</a>
                                     ) : (
                                       <span className="font-medium text-slate-700">{sol.offering_name || 'Solution'}</span>
                                     )}
                                   </div>
                                   <div className="text-[10px] text-slate-500">
-                                    {sol['6m_type'] ? <span>6M: {sol['6m_type']} </span> : ''}
-                                    {sol.provider_name ? <span>Provider: {sol.provider_name}</span> : ''}
+                                    {sol.domain_6m || sol['6m_type'] ? <span>6M: {sol.domain_6m || sol['6m_type']} </span> : ''}
+                                    {sol.solution?.trader?.organisation_name || sol.solution?.trader?.trader_name || sol.provider_name ? <span>Provider: {sol.solution?.trader?.organisation_name || sol.solution?.trader?.trader_name || sol.provider_name}</span> : ''}
+                                    {sol.geographies_raw && (
+                                      <span className="ml-1">| {t('Geography')}: {sol.geographies_raw}</span>
+                                    )}
                                   </div>
                                 </div>
                               ))}
                               {g.solutions.length > 5 && (
                                 <button onClick={() => toggleSolutions(idx)} className="text-indigo-600 hover:text-indigo-800 text-[10px]">
-                                  {need._solutionsExpanded ? '▲ Show less' : `▼ +${g.solutions.length - 5} more`}
+                                  {need._solutionsExpanded ? '▴ Show less' : `▾ +${g.solutions.length - 5} more`}
                                 </button>
                               )}
                             </div>

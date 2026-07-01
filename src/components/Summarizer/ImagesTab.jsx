@@ -23,7 +23,7 @@ export default function ImagesTab({ images, currentLang }) {
             loading="lazy"
             className="w-full h-32 object-cover"
           />
-          <div className="px-2 py-1 text-[10px] text-slate-500 text-center truncate">{img.name}</div>
+          <div className="px-2 py-1 text-[10px] text-slate-500 text-center break-words">{img.name}</div>
         </div>
       ))}
     </div>

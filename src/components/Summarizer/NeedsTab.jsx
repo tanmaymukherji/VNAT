@@ -113,8 +113,8 @@ export default function NeedsTab({ needs, currentLang }) {
             ) : filtered.map((n, i) => (
               <tr key={i} className="border-t border-slate-100 hover:bg-slate-50">
                 {cols.map((col, ci) => (
-                  <td key={ci} className={`px-2 py-1.5 align-top ${col === 'priority' ? priClass(n[col]) : 'text-slate-600'}`}>
-                    {String(n[col] || '').slice(0, 80)}
+                  <td key={ci} className={`px-2 py-1.5 align-top break-words whitespace-pre-wrap ${col === 'priority' ? priClass(n[col]) : 'text-slate-600'}`}>
+                    {String(n[col] || '')}
                   </td>
                 ))}
               </tr>

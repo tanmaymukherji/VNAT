@@ -13,6 +13,13 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    proxy: {
+      '/api/askgre': {
+        target: 'https://askgre.grameee.org',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/askgre/, '/api/chat'),
+      },
+    },
   },
   build: {
     outDir: 'dist',

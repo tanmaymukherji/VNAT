@@ -158,7 +158,7 @@ export default function SummarizePane({ project, analysisResult, onAnalysisResul
 
   if (loading) {
     return (
-      <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full">
         <div className="flex-1 flex flex-col items-center justify-center p-6">
           <div className="animate-spin h-10 w-10 border-4 border-indigo-600 border-t-transparent rounded-full mb-4" />
           <p className="text-sm text-slate-600 mb-4">{t('summarising')}</p>
@@ -229,7 +229,7 @@ export default function SummarizePane({ project, analysisResult, onAnalysisResul
         ))}
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 bg-slate-50">
+      <div className="flex-1 overflow-y-auto px-4 pt-4 pb-16 bg-slate-50 border-b border-slate-300">
         {activeTab === 'summary' && <SummaryTab data={result} currentLang={currentLang} />}
         {activeTab === 'needs' && <NeedsTab needs={result.needs} currentLang={currentLang} />}
         {activeTab === 'images' && <ImagesTab images={images} currentLang={currentLang} />}

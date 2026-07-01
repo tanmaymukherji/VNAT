@@ -304,7 +304,7 @@ export default function App() {
                     : 'border-transparent text-gray-600 hover:text-gray-800 hover:bg-gray-100'
                 }`}
               >
-                Read Data
+                Read Files
               </button>
               <button
                 onClick={() => setEditorTab('editor')}
@@ -330,7 +330,7 @@ export default function App() {
               )}
             </div>
 
-            {editorTab === 'ocr' ? (
+            {editorTab === 'ocr' && (
               <OcrValidator
                 projectId={activeProject.id}
                 images={activeProject.images || []}
@@ -338,13 +338,8 @@ export default function App() {
                 paragraphs={activeProject.paragraphsArray || []}
                 onSaveParagraphs={handleSaveOcr}
               />
-            ) : editorTab === 'solutions' ? (
-              <SolutionsTab
-                result={analysisResult}
-                onResultUpdate={handleAnalysisResult}
-                onLog={handleEditorLog}
-              />
-            ) : (
+            )}
+            {editorTab === 'editor' && (
               <UnifiedEditor
                 project={activeProject}
                 images={activeProject.images || []}
@@ -354,6 +349,14 @@ export default function App() {
                 analysisResult={analysisResult}
                 onAnalysisResult={handleAnalysisResult}
                 onLog={handleEditorLog}
+              />
+            )}
+            {editorTab === 'solutions' && analysisResult && (
+              <SolutionsTab
+                result={analysisResult}
+                onResultUpdate={handleAnalysisResult}
+                onLog={handleEditorLog}
+                currentLang={localStorage.getItem('vna_lang') || 'en'}
               />
             )}
           </div>
