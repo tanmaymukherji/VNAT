@@ -7,6 +7,7 @@ Return exactly this JSON structure:
 {
   "village_name": "string",
   "district_state": "string",
+  "state": "string (only the state name, derive it from the document — e.g., 'Chhattisgarh', 'Uttar Pradesh')",
   "population": "string",
   "context": "2-3 paragraph summary of the village context, challenges, climate risks, and baseline conditions in English",
   "needs": [
@@ -34,7 +35,8 @@ Rules:
 - Priority Low if: long term, future, eventual, gradual, minor
 - Categories must match exactly one of: Water & Sanitation, Education, Healthcare, Roads & Infrastructure, Electricity, Agriculture, Livelihood, Environment, Social Welfare, Other
 - If Hindi text appears in the document, include it verbatim in need/remarks fields
-- context should be 2-3 paragraphs summarizing village profile, climate risks, infrastructure status, and livelihoods`;
+- context should be 2-3 paragraphs summarizing village profile, climate risks, infrastructure status, and livelihoods
+- state field: extract ONLY the state name from the document. If the document mentions a district but not the state, infer the state from the district name. If you cannot determine the state, leave it empty.`;
 
 const SYSTEM_PROMPT_HI = `You are an expert at analyzing village planning LCA (Local Context Assessment) documents in Hindi and English.
 Extract structured information and return ONLY valid JSON — no explanation, no markdown, just the JSON object.
@@ -43,6 +45,7 @@ Return exactly this JSON structure:
 {
   "village_name": "string",
   "district_state": "string",
+  "state": "string (only the state name, derive it from the document — e.g., 'छत्तीसगढ़', 'उत्तर प्रदेश')",
   "population": "string",
   "context": "2-3 paragraphs summary of the village context, challenges, climate risks, and baseline conditions in Hindi",
   "needs": [
@@ -69,7 +72,8 @@ Rules:
 - Priority Low if: long term, future, eventual, gradual, minor
 - Categories must match exactly one of: Water & Sanitation, Education, Healthcare, Roads & Infrastructure, Electricity, Agriculture, Livelihood, Environment, Social Welfare, Other
 - If English text appears in the document, include it verbatim in need/remarks fields
-- context should be 2-3 paragraphs in Hindi summarizing village profile, climate risks, infrastructure status, and livelihoods`;
+- context should be 2-3 paragraphs in Hindi summarizing village profile, climate risks, infrastructure status, and livelihoods
+- state field: extract ONLY the state name from the document. If the document mentions a district but not the state, infer the state from the district name. If you cannot determine the state, leave it empty.`;
 
 function parseAIResponse(content) {
   let jsonStr = content;

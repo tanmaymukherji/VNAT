@@ -105,6 +105,7 @@ export default function SummarizePane({ project, analysisResult, onAnalysisResul
         const normalized = {
           village_name: aiResult.data.village_name || project.name || '',
           district_state: aiResult.data.district_state || '',
+          state: aiResult.data.state || '',
           population: aiResult.data.population || '',
           context: aiResult.data.context || '',
           needs,
